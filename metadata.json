@@ -1,0 +1,8 @@
+{
+  "name": "연애 앱 (Dating App)",
+  "description": "위치 기반 주변 사용자 탐색 및 프로필 매칭 연애 앱",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
