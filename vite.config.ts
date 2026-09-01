@@ -1,23 +1,26 @@
-import tailwindcss from '@tailwindcss/vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
-import {defineConfig, Plugin} from 'vite';
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
+import path from "path";
+import { defineConfig, Plugin } from "vite";
 
 function leafletSafePlugin(): Plugin {
   return {
-    name: 'vite-plugin-leaflet-safe',
-    enforce: 'pre',
+    name: "vite-plugin-leaflet-safe",
+    enforce: "pre",
     transform(code: string, id: string) {
-      if (id.includes('leaflet')) {
+      if (id.includes("leaflet")) {
         let transformed = code;
+
         transformed = transformed.replace(
-          /return\s+([a-zA-Z0-9_$]+)\._leaflet_pos\s*\|\|\s*new\s+Point\(0,\s*0\);/g,
-          'return ($1 && $1._leaflet_pos) ? $1._leaflet_pos : new Point(0, 0);'
+          /return\s+\(\(\s*\[A-Z0-9_\$]+,\s*\[A-Z0-9_\$]+\s*\]\)\s*=>\s*new\s+Point\(0,\s*0\)\)/g,
+          "return (L && L._leaflet_pos) ? L._leaflet_pos : new Point(0, 0);"
         );
+
         transformed = transformed.replace(
-          /([a-zA-Z0-9_$]+)\._leaflet_pos\s*=\s*([a-zA-Z0-9_$]+);/g,
-          'if ($1) { $1._leaflet_pos = $2; }'
+          /if\s*\(\s*\!\[A-Z0-9_\$]+\s*\|\s*\!\[A-Z0-9_\$]+\.leaflet_pos\s*\)\s*=>\s*\{\s*if\s*\(\s*\!\[A-Z0-9_\$]+\s*\)\s*=>\s*\{\s*\}\s*\}/g,
+          "if (!L || !L._leaflet_pos) { return; }"
         );
+
         return {
           code: transformed,
           map: null,
@@ -28,17 +31,16 @@ function leafletSafePlugin(): Plugin {
   };
 }
 
-export default defineConfig(() => {
-  return {
-    plugins: [leafletSafePlugin(), react(), tailwindcss()],
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
+export default defineConfig(() => ({
+  base: '/dating-app-kepco/',
+  plugins: [leafletSafePlugin(), react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
     },
-    server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
-    },
-  };
-});
+  },
+  define: {
+    "process.env.DISABLE_HM": "false",
+    watch: process.env.DISABLE_HMR === "true" ? null : {},
+  },
+}));
