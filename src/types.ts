@@ -249,6 +249,8 @@ export interface GiftDeliveryLog {
   memo?: string;
 }
 
+export type AdminLogEntry = GiftDeliveryLog;
+
 
 
 

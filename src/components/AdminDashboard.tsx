@@ -38,6 +38,12 @@ import {
   CalendarDays,
   ShieldCheck,
   UserCog,
+  Cloud,
+  UploadCloud,
+  DownloadCloud,
+  Flame,
+  Server,
+  HardDrive,
 } from 'lucide-react';
 import {
   AdminAccount,
@@ -54,6 +60,9 @@ import { AdminService, MASTER_ADMIN_CREDENTIALS, DEFAULT_AGENCY_ADMINS } from '.
 import { DatingService, DEFAULT_ALLOWED_DOMAINS } from '../services/datingService';
 import { FirebaseChatService } from '../services/firebaseChatService';
 import { ItemService } from '../services/itemService';
+import { ApiSyncService } from '../services/apiSyncService';
+import { FirestoreSyncService } from '../services/firestoreSyncService';
+import { isFirebaseConfigured, getStoredFirebaseConfig, saveCustomFirebaseConfig, clearCustomFirebaseConfig, FirebaseProjectConfig } from '../services/firebaseConfig';
 import { calculateAge, formatDistance, getUserActiveStatus } from '../utils/geo';
 import { getAvatarForUser, handleAvatarError } from '../utils/avatarUtils';
 
@@ -97,9 +106,113 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Feedback Notification Toast
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  // Cloud Database & Firebase Sync States
+  const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
+  const [isCloudSyncing, setIsCloudSyncing] = useState(false);
+  const [currentFbConfig, setCurrentFbConfig] = useState<FirebaseProjectConfig>(() => {
+    return (
+      getStoredFirebaseConfig() || {
+        apiKey: '',
+        projectId: '',
+        authDomain: '',
+        databaseURL: '',
+        storageBucket: '',
+        appId: '',
+      }
+    );
+  });
+
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // 1-Click Push All Data to Cloud Firestore & Server DB
+  const handlePushAllToCloud = async () => {
+    setIsCloudSyncing(true);
+    try {
+      const allCurrentUsers = DatingService.getAllUsers();
+      const allCurrentAdmins = AdminService.getAllAdminAccounts();
+      const allCurrentBoard = AdminService.getBoardPosts();
+
+      // 1. Sync to Server
+      await ApiSyncService.syncUsers(allCurrentUsers);
+      await ApiSyncService.syncAdminAccounts(allCurrentAdmins);
+      for (const p of allCurrentBoard) {
+        await ApiSyncService.saveBoardPost(p);
+      }
+
+      // 2. Sync to Firestore
+      if (isFirebaseConfigured()) {
+        await FirestoreSyncService.seedUsersToFirestore(allCurrentUsers);
+        for (const a of allCurrentAdmins) {
+          await FirestoreSyncService.saveAdminAccount(a);
+        }
+        for (const p of allCurrentBoard) {
+          await FirestoreSyncService.saveBoardPost(p);
+        }
+      }
+
+      showToast(`⚡ 전체 ${allCurrentUsers.length}명 회원 및 ${allCurrentAdmins.length}명 관리자 정보가 클라우드 DB에 영구 보관되었습니다.`, 'success');
+      refreshAllData();
+    } catch (e: any) {
+      showToast(`클라우드 동기화 중 일부 오류가 발생했습니다: ${e?.message || '확인 필요'}`, 'error');
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
+  // 1-Click Pull Latest from Cloud Firestore & Server DB
+  const handlePullAllFromCloud = async () => {
+    setIsCloudSyncing(true);
+    try {
+      await AdminService.syncFromCloudFirestore();
+      await DatingService.syncFromCloudFirestore();
+      refreshAllData();
+      showToast('📥 클라우드 서버 및 Firestore로부터 최신 회원/관리자 데이터를 완벽하게 동기화했습니다.', 'success');
+    } catch (e: any) {
+      showToast(`데이터 갱신 오류: ${e?.message || '서버 응답 없음'}`, 'error');
+    } finally {
+      setIsCloudSyncing(false);
+    }
+  };
+
+  // Save Custom Firebase Project Config
+  const handleSaveFirebaseConfigSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentFbConfig.apiKey || !currentFbConfig.projectId) {
+      showToast('API Key와 Project ID는 필수 입력값입니다.', 'error');
+      return;
+    }
+
+    try {
+      await ApiSyncService.saveFirebaseConfig(currentFbConfig);
+      saveCustomFirebaseConfig(currentFbConfig);
+      setIsFirebaseModalOpen(false);
+      showToast('🔥 Firebase 연동 설정이 저장되었습니다. 전체 데이터를 클라우드에 동기화합니다.', 'success');
+      handlePushAllToCloud();
+    } catch (e: any) {
+      showToast(`설정 저장 오류: ${e?.message}`, 'error');
+    }
+  };
+
+  // Export JSON Backup
+  const handleExportBackupJson = () => {
+    const backup = {
+      users: DatingService.getAllUsers(),
+      adminAccounts: AdminService.getAllAdminAccounts(),
+      boardPosts: AdminService.getBoardPosts(),
+      reports: AdminService.getAllReports(),
+      timestamp: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kepco_matching_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('💾 데이터베이스 백업 JSON 파일이 다운로드되었습니다.', 'success');
   };
 
   // Re-sync Data
@@ -117,6 +230,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setBoardPosts(AdminService.getBoardPosts());
     setGiftLogs(AdminService.getGiftDeliveryLogs(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain));
   };
+
+  // Live Cloud Firestore Synchronization across all devices
+  useEffect(() => {
+    AdminService.syncFromCloudFirestore().then(() => {
+      DatingService.syncFromCloudFirestore().then(() => {
+        refreshAllData();
+      });
+    });
+
+    const unsubAdmins = AdminService.subscribeToLiveAdmins(() => {
+      refreshAllData();
+    });
+    const unsubBoard = AdminService.subscribeToLiveBoard(() => {
+      refreshAllData();
+    });
+    const unsubUsers = DatingService.subscribeToLiveUsers(() => {
+      refreshAllData();
+    });
+
+    return () => {
+      unsubAdmins();
+      unsubBoard();
+      unsubUsers();
+    };
+  }, []);
 
   // ==========================================
   // TAB 1: MEMBERSHIP APPROVAL ACTIONS
@@ -512,33 +650,65 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         {/* Action Widgets in Header */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Cloud Database Status Pill */}
+          <div className="hidden md:flex items-center gap-2 bg-stone-800/90 border border-stone-700 px-3 py-1.5 rounded-xl text-xs">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="font-semibold text-stone-200">
+              {isFirebaseConfigured() ? '🔥 Firebase 클라우드 DB' : '⚡ 서버 영구 DB 실시간 동기화'}
+            </span>
+          </div>
+
+          {/* Quick Push to Cloud */}
+          <button
+            onClick={handlePushAllToCloud}
+            disabled={isCloudSyncing}
+            title="전체 데이터를 클라우드에 즉시 저장"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+          >
+            <UploadCloud className={`w-3.5 h-3.5 ${isCloudSyncing ? 'animate-bounce' : ''}`} />
+            <span className="hidden sm:inline">클라우드 즉시 저장</span>
+          </button>
+
+          {/* Firebase Project Settings Modal Trigger */}
+          <button
+            onClick={() => setIsFirebaseModalOpen(true)}
+            title="Firebase 프로젝트 설정 & 클라우드 DB 연동"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+          >
+            <Flame className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Firebase 설정</span>
+          </button>
+
           {/* Monthly Event Boxes Balance Pill */}
-          <div className="hidden sm:flex items-center gap-2 bg-stone-800/90 border border-stone-700 px-3.5 py-1.5 rounded-xl shadow-inner">
+          <div className="hidden lg:flex items-center gap-2 bg-stone-800/90 border border-stone-700 px-3 py-1.5 rounded-xl shadow-inner">
             <Gift className="w-4 h-4 text-amber-400" />
             <div className="text-xs">
-              <span className="text-stone-400 mr-1.5">이벤트 상자 보유:</span>
+              <span className="text-stone-400 mr-1.5">이벤트 상자:</span>
               <span className="font-extrabold text-amber-300 text-sm">
-                {adminProfile.isMaster ? '무제한 (최고관리자)' : `${adminProfile.eventBoxesRemaining?.toLocaleString() || 0}개`}
+                {adminProfile.isMaster ? '무제한' : `${adminProfile.eventBoxesRemaining?.toLocaleString() || 0}개`}
               </span>
-              {!adminProfile.isMaster && <span className="text-[10px] text-stone-400 ml-1">(월 1,000개 기본)</span>}
             </div>
           </div>
 
           <button
-            onClick={refreshAllData}
-            title="데이터 새로고침"
-            className="p-2 text-stone-400 hover:text-white bg-stone-800/80 hover:bg-stone-700 rounded-lg transition-colors border border-stone-700"
+            onClick={handlePullAllFromCloud}
+            disabled={isCloudSyncing}
+            title="클라우드에서 최신 데이터 당겨오기"
+            className="p-2 text-stone-300 hover:text-white bg-stone-800/80 hover:bg-stone-700 rounded-lg transition-colors border border-stone-700 cursor-pointer"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${isCloudSyncing ? 'animate-spin' : ''}`} />
           </button>
 
           <button
             onClick={onLogout}
-            className="flex items-center gap-2 px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all"
+            className="flex items-center gap-2 px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
-            <span>관리자 로그아웃</span>
+            <span className="hidden sm:inline">로그아웃</span>
           </button>
         </div>
       </header>
@@ -1926,7 +2096,108 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
 
-              {/* DB Optimization Block */}
+              {/* 1. Firebase Cloud DB & Multi-Device Realtime Sync Center */}
+              <div className="bg-stone-950/90 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-stone-800/80 pb-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-amber-500/20 text-amber-400 flex items-center justify-center border border-amber-500/30">
+                      <Flame className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-base font-bold text-white">클라우드 데이터베이스 및 영구 보존 센터</h4>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                          isFirebaseConfigured()
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                            : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                        }`}>
+                          {isFirebaseConfigured() ? 'Firebase Firestore 연결됨' : '풀스택 서버 영구 보관 활성'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-stone-400 mt-0.5">
+                        모든 사용자 프로필, 관리자 계정, 소통 게시판, 인벤토리 데이터가 전 기기 실시간 동기화 및 무기한 보존됩니다.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handlePushAllToCloud}
+                      disabled={isCloudSyncing}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-lg shadow-emerald-950/40 cursor-pointer"
+                    >
+                      <UploadCloud className={`w-4 h-4 ${isCloudSyncing ? 'animate-bounce' : ''}`} />
+                      <span>전체 데이터 클라우드 영구 저장</span>
+                    </button>
+
+                    <button
+                      onClick={handlePullAllFromCloud}
+                      disabled={isCloudSyncing}
+                      className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all border border-stone-700 cursor-pointer"
+                    >
+                      <DownloadCloud className={`w-4 h-4 ${isCloudSyncing ? 'animate-spin' : ''}`} />
+                      <span>클라우드 데이터 최신화</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsFirebaseModalOpen(true)}
+                      className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                    >
+                      <Flame className="w-4 h-4" />
+                      <span>Firebase 연동 설정</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Status Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                  <div className="bg-stone-900/80 p-3.5 rounded-xl border border-stone-800 space-y-1">
+                    <div className="text-stone-400 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-rose-400" />
+                        회원 데이터 보존
+                      </span>
+                      <strong className="text-emerald-400">무기한 보관 중</strong>
+                    </div>
+                    <p className="text-stone-300 text-[11px]">
+                      총 {stats.totalUsers}명 회원 위치, 프로필, 사진 영구 보존
+                    </p>
+                  </div>
+
+                  <div className="bg-stone-900/80 p-3.5 rounded-xl border border-stone-800 space-y-1">
+                    <div className="text-stone-400 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-amber-400" />
+                        기관 관리자 동기화
+                      </span>
+                      <strong className="text-emerald-400">전 기기 실시간 공유</strong>
+                    </div>
+                    <p className="text-stone-300 text-[11px]">
+                      총 {allAdmins.length}명 관리자 계정 및 이벤트 상자 동기화
+                    </p>
+                  </div>
+
+                  <div className="bg-stone-900/80 p-3.5 rounded-xl border border-stone-800 space-y-1">
+                    <div className="text-stone-400 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <HardDrive className="w-3.5 h-3.5 text-blue-400" />
+                        JSON 백업 및 다운로드
+                      </span>
+                      <button
+                        onClick={handleExportBackupJson}
+                        className="text-blue-400 hover:text-blue-300 font-bold underline cursor-pointer"
+                      >
+                        백업 받기
+                      </button>
+                    </div>
+                    <p className="text-stone-300 text-[11px]">
+                      언제든 데이터베이스 전체를 파일로 내려받아 보관 가능
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. DB Optimization Block */}
               <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-4">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center">
@@ -1943,7 +2214,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <div className="pt-2">
                   <button
                     onClick={handleManualDbOptimize}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition-colors shadow-lg shadow-blue-950/40"
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition-colors shadow-lg shadow-blue-950/40 cursor-pointer"
                   >
                     <RefreshCw className="w-4 h-4" />
                     <span>지금 72시간 초과 만료 데이터 즉시 정리하기</span>
@@ -2670,16 +2941,150 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => setModerationAction(null)}
-                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold"
+                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold cursor-pointer"
                 >
                   취소
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs"
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs cursor-pointer"
                 >
                   처리 확정
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: FIREBASE CLOUD DB CONFIGURATION */}
+      {/* ========================================================================= */}
+      {isFirebaseModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-amber-500/40 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                  <Flame className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Firebase 클라우드 연동 설정</h3>
+                  <p className="text-xs text-stone-400">
+                    Google Firebase Firestore 및 Realtime DB를 연동하여 모든 데이터를 영구 보존합니다.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsFirebaseModalOpen(false)}
+                className="text-stone-400 hover:text-white p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveFirebaseConfigSubmit} className="space-y-3.5 text-xs">
+              <div className="bg-amber-950/30 border border-amber-500/30 rounded-xl p-3 text-[11px] text-amber-200/90 leading-relaxed">
+                💡 Firebase 콘솔의 <strong>[프로젝트 설정] &gt; [웹 앱 구성]</strong>의 <code>firebaseConfig</code> 객체 값을 입력하면 즉시 전 기기 실시간 영구 저장이 활성화됩니다.
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1 block">
+                  Project ID <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={currentFbConfig.projectId}
+                  onChange={(e) => setCurrentFbConfig({ ...currentFbConfig, projectId: e.target.value.trim() })}
+                  placeholder="예: my-dating-kepco-app"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1 block">
+                  API Key <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={currentFbConfig.apiKey}
+                  onChange={(e) => setCurrentFbConfig({ ...currentFbConfig, apiKey: e.target.value.trim() })}
+                  placeholder="AIzaSy..."
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white font-mono"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-stone-300 mb-1 block">Auth Domain</label>
+                  <input
+                    type="text"
+                    value={currentFbConfig.authDomain}
+                    onChange={(e) => setCurrentFbConfig({ ...currentFbConfig, authDomain: e.target.value.trim() })}
+                    placeholder="프로젝트명.firebaseapp.com"
+                    className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-stone-300 mb-1 block">App ID</label>
+                  <input
+                    type="text"
+                    value={currentFbConfig.appId}
+                    onChange={(e) => setCurrentFbConfig({ ...currentFbConfig, appId: e.target.value.trim() })}
+                    placeholder="1:12345:web:abcdef"
+                    className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1 block">Database URL (선택, Realtime DB)</label>
+                <input
+                  type="text"
+                  value={currentFbConfig.databaseURL || ''}
+                  onChange={(e) => setCurrentFbConfig({ ...currentFbConfig, databaseURL: e.target.value.trim() })}
+                  placeholder="https://프로젝트명-default-rtdb.firebaseio.com"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-white font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-stone-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearCustomFirebaseConfig();
+                    setCurrentFbConfig({
+                      apiKey: '',
+                      projectId: '',
+                      authDomain: '',
+                      databaseURL: '',
+                      storageBucket: '',
+                      appId: '',
+                    });
+                    showToast('설정이 초기화되었습니다.', 'info');
+                  }}
+                  className="text-stone-400 hover:text-rose-400 text-[11px] underline cursor-pointer"
+                >
+                  설정 초기화
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsFirebaseModalOpen(false)}
+                    className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-xs font-semibold cursor-pointer"
+                  >
+                    닫기
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-amber-950/40"
+                  >
+                    연동 저장 및 즉시 동기화
+                  </button>
+                </div>
               </div>
             </form>
           </div>

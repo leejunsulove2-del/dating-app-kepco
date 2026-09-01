@@ -1,5 +1,7 @@
 import { UserInventory, DailyActivityState, ItemId, InventoryItemInfo } from '../types';
 import { DatingService } from './datingService';
+import { FirestoreSyncService } from './firestoreSyncService';
+import { ApiSyncService } from './apiSyncService';
 
 const INVENTORY_STORAGE_KEY = 'yeon_user_inventory_v1';
 const DAILY_STORAGE_KEY = 'yeon_daily_activity_v1';
@@ -111,6 +113,8 @@ export class ItemService {
   static saveInventory(userId: string, inventory: UserInventory) {
     try {
       localStorage.setItem(`${INVENTORY_STORAGE_KEY}_${userId}`, JSON.stringify(inventory));
+      // Cloud Firestore & Server sync
+      ApiSyncService.saveInventory(userId, inventory).catch(() => {});
     } catch (e) {
       console.warn('Failed to save inventory', e);
     }

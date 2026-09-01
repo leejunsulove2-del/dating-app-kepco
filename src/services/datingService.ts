@@ -3,6 +3,9 @@ import { calculateDistanceKm, getRandomCoordinateNearby, calculateAge } from '..
 import { INITIAL_PROFILES } from './mockProfiles';
 import { FirebaseChatService } from './firebaseChatService';
 import { getAvatarForUser } from '../utils/avatarUtils';
+import { FirestoreSyncService } from './firestoreSyncService';
+import { isFirebaseConfigured } from './firebaseConfig';
+import { ApiSyncService } from './apiSyncService';
 
 const USERS_STORAGE_KEY = 'love_app_users';
 const CURRENT_USER_KEY = 'love_app_current_user';
@@ -466,7 +469,7 @@ export class DatingService {
   }
 
   /**
-   * Save / Update Current User
+   * Save / Update Current User (Persists to local storage & Cloud Firestore)
    */
   public static saveCurrentUser(user: UserProfile): void {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
@@ -481,6 +484,121 @@ export class DatingService {
     }
     userMap.set(user.id, user);
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(Array.from(userMap.values())));
+
+    // Sync to Server API and Cloud Firestore
+    ApiSyncService.saveUser(user).catch(() => {});
+  }
+
+  /**
+   * Save / Update Any User in Database
+   */
+  public static saveUser(user: UserProfile): void {
+    const allUsers = this.getAllUsers();
+    const userMap = new Map<string, UserProfile>();
+    for (const u of allUsers) {
+      if (u && u.id) {
+        userMap.set(u.id, u);
+      }
+    }
+    userMap.set(user.id, user);
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(Array.from(userMap.values())));
+
+    const cur = this.getCurrentUser();
+    if (cur && cur.id === user.id) {
+      localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    }
+
+    // Sync to Server API and Cloud Firestore
+    ApiSyncService.saveUser(user).catch(() => {});
+  }
+
+  /**
+   * Sync Users from Server and Cloud Firestore into local cache
+   */
+  public static async syncFromCloudFirestore(): Promise<UserProfile[]> {
+    try {
+      // 1. Try Server API
+      const serverData = await ApiSyncService.fetchAllData();
+      if (serverData && serverData.users && serverData.users.length > 0) {
+        const localUsers = this.getAllUsers();
+        const mergedMap = new Map<string, UserProfile>();
+        for (const u of localUsers) {
+          if (u && u.id) mergedMap.set(u.id, u);
+        }
+        for (const su of serverData.users) {
+          if (su && su.id) mergedMap.set(su.id, su);
+        }
+        const mergedList = Array.from(mergedMap.values());
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+        return mergedList;
+      }
+
+      // 2. Try Firestore
+      const cloudUsers = await FirestoreSyncService.getAllUsers();
+      if (cloudUsers && cloudUsers.length > 0) {
+        const localUsers = this.getAllUsers();
+        const mergedMap = new Map<string, UserProfile>();
+
+        for (const u of localUsers) {
+          if (u && u.id) mergedMap.set(u.id, u);
+        }
+
+        for (const cu of cloudUsers) {
+          if (cu && cu.id) {
+            mergedMap.set(cu.id, cu);
+          }
+        }
+
+        const mergedList = Array.from(mergedMap.values());
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+        return mergedList;
+      }
+    } catch (e) {
+      console.warn('Failed to sync from server/Firestore:', e);
+    }
+    return this.getAllUsers();
+  }
+
+  /**
+   * Listen to live real-time user updates across all devices
+   */
+  public static subscribeToLiveUsers(callback?: (users: UserProfile[]) => void): () => void {
+    const unsub = FirestoreSyncService.subscribeToUsers((cloudUsers) => {
+      if (cloudUsers && cloudUsers.length > 0) {
+        const localUsers = this.getAllUsers();
+        const mergedMap = new Map<string, UserProfile>();
+
+        for (const u of localUsers) {
+          if (u && u.id) mergedMap.set(u.id, u);
+        }
+
+        for (const cu of cloudUsers) {
+          if (cu && cu.id) {
+            mergedMap.set(cu.id, cu);
+          }
+        }
+
+        const mergedList = Array.from(mergedMap.values());
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+
+        // If current user updated on cloud (e.g. approved by admin on another device)
+        const curUser = this.getCurrentUser();
+        if (curUser) {
+          const updatedCur = mergedMap.get(curUser.id);
+          if (updatedCur) {
+            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedCur));
+          }
+        }
+
+        if (callback) {
+          callback(mergedList);
+        }
+      }
+    });
+
+    return () => {
+      if (unsub) unsub();
+    };
   }
 
   /**
@@ -630,6 +748,11 @@ export class DatingService {
 
     likes.push(newLike);
     localStorage.setItem(LIKES_STORAGE_KEY, JSON.stringify(likes));
+
+    // Sync like action to Firestore
+    FirestoreSyncService.saveLikeAction(newLike).catch((err) => {
+      console.warn('Failed to save like action to Firestore:', err);
+    });
 
     // If match, auto-create welcome match message and Realtime Database room
     if (isMatch) {
@@ -818,6 +941,11 @@ export class DatingService {
     // Save user
     allUsers.push(newUser);
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+
+    // Save to Cloud Firestore for permanent cross-device persistence
+    FirestoreSyncService.saveUser(newUser).catch((err) => {
+      console.warn('Failed to save registered user to Cloud Firestore:', err);
+    });
 
     return {
       success: true,

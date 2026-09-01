@@ -32,7 +32,7 @@ function leafletSafePlugin(): Plugin {
 }
 
 export default defineConfig(() => ({
-  base: '/dating-app-kepco/',
+  base: process.env.VITE_BASE_PATH || '/',
   plugins: [leafletSafePlugin(), react(), tailwindcss()],
   resolve: {
     alias: {

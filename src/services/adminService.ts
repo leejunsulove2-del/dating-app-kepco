@@ -12,6 +12,8 @@ import {
 import { DatingService } from './datingService';
 import { ItemService } from './itemService';
 import { FirebaseChatService } from './firebaseChatService';
+import { FirestoreSyncService } from './firestoreSyncService';
+import { ApiSyncService } from './apiSyncService';
 
 const ADMIN_ACCOUNTS_KEY = 'love_app_admin_accounts';
 const REPORTS_STORAGE_KEY = 'love_app_user_reports';
@@ -153,6 +155,104 @@ export class AdminService {
    */
   public static saveAllAdminAccounts(admins: AdminAccount[]): void {
     localStorage.setItem(ADMIN_ACCOUNTS_KEY, JSON.stringify(admins));
+    // Cloud sync each admin
+    ApiSyncService.syncAdminAccounts(admins).catch(() => {});
+  }
+
+  /**
+   * Sync Admin Accounts & Board from Server and Cloud Firestore
+   */
+  public static async syncFromCloudFirestore(): Promise<AdminAccount[]> {
+    try {
+      // 1. Check Server API
+      const serverData = await ApiSyncService.fetchAllData();
+      if (serverData && serverData.adminAccounts && serverData.adminAccounts.length > 0) {
+        const localAdmins = this.getAllAdminAccounts();
+        const mergedMap = new Map<string, AdminAccount>();
+        for (const a of localAdmins) {
+          if (a && a.id) mergedMap.set(a.id, a);
+        }
+        for (const sa of serverData.adminAccounts) {
+          if (sa && sa.id) mergedMap.set(sa.id, sa);
+        }
+        const list = Array.from(mergedMap.values());
+        localStorage.setItem(ADMIN_ACCOUNTS_KEY, JSON.stringify(list));
+        return list;
+      }
+
+      // 2. Check Firestore
+      const cloudAdmins = await FirestoreSyncService.getAllAdminAccounts();
+      if (cloudAdmins && cloudAdmins.length > 0) {
+        const localAdmins = this.getAllAdminAccounts();
+        const mergedMap = new Map<string, AdminAccount>();
+
+        for (const a of localAdmins) {
+          if (a && a.id) mergedMap.set(a.id, a);
+        }
+
+        for (const ca of cloudAdmins) {
+          if (ca && ca.id) {
+            mergedMap.set(ca.id, ca);
+          }
+        }
+
+        const list = Array.from(mergedMap.values());
+        localStorage.setItem(ADMIN_ACCOUNTS_KEY, JSON.stringify(list));
+        return list;
+      }
+    } catch (e) {
+      console.warn('Failed to sync admin accounts from Firestore:', e);
+    }
+    return this.getAllAdminAccounts();
+  }
+
+  /**
+   * Subscribe to live Admin Accounts across all devices
+   */
+  public static subscribeToLiveAdmins(callback?: (admins: AdminAccount[]) => void): () => void {
+    const unsub = FirestoreSyncService.subscribeToAdminAccounts((cloudAdmins) => {
+      if (cloudAdmins && cloudAdmins.length > 0) {
+        const localAdmins = this.getAllAdminAccounts();
+        const mergedMap = new Map<string, AdminAccount>();
+
+        for (const a of localAdmins) {
+          if (a && a.id) mergedMap.set(a.id, a);
+        }
+
+        for (const ca of cloudAdmins) {
+          if (ca && ca.id) mergedMap.set(ca.id, ca);
+        }
+
+        const list = Array.from(mergedMap.values());
+        localStorage.setItem(ADMIN_ACCOUNTS_KEY, JSON.stringify(list));
+
+        if (callback) {
+          callback(list);
+        }
+      }
+    });
+
+    return () => {
+      if (unsub) unsub();
+    };
+  }
+
+  /**
+   * Subscribe to live Admin Board Posts across all devices
+   */
+  public static subscribeToLiveBoard(callback?: (posts: AdminBoardPost[]) => void): () => void {
+    const unsub = FirestoreSyncService.subscribeToBoardPosts((cloudPosts) => {
+      if (cloudPosts) {
+        localStorage.setItem(ADMIN_BOARD_POSTS_KEY, JSON.stringify(cloudPosts));
+        if (callback) {
+          callback(cloudPosts);
+        }
+      }
+    });
+
+    return () => {
+      if (unsub) unsub();
+    };
   }
 
   /**

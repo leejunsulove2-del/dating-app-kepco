@@ -162,7 +162,7 @@ export default function App() {
     };
   }, [currentUser?.id]);
 
-  // Check login, location consent & daily attendance prompt upon mount + DB Optimization Sweep
+  // Check login, location consent & daily attendance prompt upon mount + DB Optimization Sweep + Cloud Firestore Sync
   useEffect(() => {
     // Run 72-hour TTL message purge & local storage DB optimization
     try {
@@ -173,6 +173,39 @@ export default function App() {
 
     DatingService.initDatabase(currentLocation.latitude, currentLocation.longitude);
     requestAccurateLocation(true);
+
+    // Sync all users from Cloud Firestore & subscribe to real-time changes
+    DatingService.syncFromCloudFirestore().then((cloudUsers) => {
+      if (currentUserRef.current) {
+        const freshCurrent = cloudUsers.find((u) => u.id === currentUserRef.current?.id);
+        if (freshCurrent) {
+          setCurrentUser(freshCurrent);
+        }
+        const users = DatingService.fetchNearbyUsers(
+          currentLocationRef.current.latitude,
+          currentLocationRef.current.longitude,
+          currentUserRef.current.id,
+          filterRef.current
+        );
+        setNearbyUsers(users);
+      }
+    });
+
+    const unsubLiveUsers = DatingService.subscribeToLiveUsers((allUsers) => {
+      if (currentUserRef.current) {
+        const freshCurrent = allUsers.find((u) => u.id === currentUserRef.current?.id);
+        if (freshCurrent) {
+          setCurrentUser(freshCurrent);
+        }
+        const users = DatingService.fetchNearbyUsers(
+          currentLocationRef.current.latitude,
+          currentLocationRef.current.longitude,
+          currentUserRef.current.id,
+          filterRef.current
+        );
+        setNearbyUsers(users);
+      }
+    });
 
     if (currentUser) {
       if (!currentUser.company || !currentUser.birthDate || !currentUser.photoUrl) {
@@ -207,6 +240,10 @@ export default function App() {
     } else if (!currentAdmin) {
       setAuthModalOpen(true);
     }
+
+    return () => {
+      unsubLiveUsers();
+    };
   }, []);
 
   // Location synchronization handler (Transmits only coordinates, fetches nearby, runs on individual 30s cycle)
