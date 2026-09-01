@@ -332,15 +332,15 @@ export class AdminService {
     target.approvedByAdmin = `${adminName} (${adminEmail})`;
     target.verifiedEmail = true;
 
-    // Grant 1 Initial Welcome Box upon approval
-    ItemService.addWelcomeBoxes(target.id, 1);
+    // Ensure starter inventory (10 message tickets, 0 others)
+    ItemService.getInventory(target.id);
 
     DatingService.saveCurrentUser(target);
 
     return {
       success: true,
       user: target,
-      message: `[${target.name} (${target.email})] 님의 가입 승인이 완료되었습니다. (환영박스 1개 자동 지급)`,
+      message: `[${target.name} (${target.email})] 님의 가입 승인이 완료되었습니다. (메시지 횟수 증가권 10장 기본 지급)`,
     };
   }
 

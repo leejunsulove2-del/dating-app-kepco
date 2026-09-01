@@ -88,6 +88,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Search & Filter States
   const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [agencyAdminSearchTerm, setAgencyAdminSearchTerm] = useState('');
+  const [selectedAgencyFilter, setSelectedAgencyFilter] = useState<string>('all');
   const [selectedUserDetail, setSelectedUserDetail] = useState<UserProfile | null>(null);
   const [selectedReport, setSelectedReport] = useState<UserReport | null>(null);
   const [boardCategoryFilter, setBoardCategoryFilter] = useState<'all' | 'notice' | 'request' | 'policy' | 'free'>('all');
@@ -979,6 +981,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                   {/* Right: Search & Sort */}
                   <div className="flex flex-col sm:flex-row items-center gap-2">
+                    {adminProfile.isMaster && (
+                      <select
+                        value={selectedAgencyFilter}
+                        onChange={(e) => setSelectedAgencyFilter(e.target.value)}
+                        className="w-full sm:w-auto bg-stone-900 border border-stone-800 rounded-xl px-3 py-1.5 text-xs text-amber-300 focus:outline-none focus:border-amber-500 font-semibold"
+                      >
+                        <option value="all">🏢 모든 기관 전체보기</option>
+                        {DEFAULT_ALLOWED_DOMAINS.map((d) => (
+                          <option key={d.domain} value={d.domain}>
+                            {d.companyName} (@{d.domain})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+
                     <div className="relative w-full sm:w-60">
                       <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
                       <input
@@ -1031,6 +1048,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <tbody className="divide-y divide-stone-800/70">
                       {agencyUsers
                         .filter((u) => {
+                          if (selectedAgencyFilter !== 'all') {
+                            const domain = u.email?.split('@')[1];
+                            if (domain !== selectedAgencyFilter) return false;
+                          }
                           if (userSearchTerm) {
                             const term = userSearchTerm.toLowerCase();
                             const matchName = u.name?.toLowerCase().includes(term);
@@ -1317,14 +1338,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* ========================================================================= */}
           {activeTab === 'agency_admins' && adminProfile.isMaster && (
             <div className="space-y-6">
+              {/* Top Overview KPI Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex items-center gap-4 shadow-lg">
+                  <div className="p-3 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30">
+                    <Building2 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-stone-400 font-medium">등록된 총 기관 관리자</div>
+                    <div className="text-xl font-bold text-white font-mono mt-0.5">{allAdmins.length}명</div>
+                  </div>
+                </div>
+
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex items-center gap-4 shadow-lg">
+                  <div className="p-3 bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/30">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-stone-400 font-medium">관리 대상 공공기관 수</div>
+                    <div className="text-xl font-bold text-white font-mono mt-0.5">
+                      {new Set(allAdmins.map((a) => a.agencyDomain)).size}개 기관
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex items-center gap-4 shadow-lg">
+                  <div className="p-3 bg-amber-500/20 text-amber-300 rounded-xl border border-amber-500/30">
+                    <Gift className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="text-xs text-stone-400 font-medium">배정된 이벤트 상자 총 잔여량</div>
+                    <div className="text-xl font-bold text-amber-300 font-mono mt-0.5">
+                      {allAdmins.reduce((acc, a) => acc + (a.eventBoxesRemaining || 0), 0).toLocaleString()}개
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Add Agency Admin Form */}
               <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-6 shadow-xl">
                 <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-1">
                   <Building2 className="w-5 h-5 text-amber-400" />
-                  <span>신규 기관 관리자 계정 생성 (기관별 복수 관리자 지원)</span>
+                  <span>신규 기관 담당자 계정 생성 (기관별 복수 관리자 지원)</span>
                 </h3>
                 <p className="text-xs text-stone-400 mb-6">
-                  각 공공기관 도메인(@기관)별로 가입 심사 및 이벤트를 주관할 관리자 계정을 생성합니다. 한 기관에 여러 명의 관리자를 만들 수 있습니다.
+                  각 공공기관 도메인(@기관)별로 가입 심사 및 이벤트를 주관할 관리자 계정을 생성합니다. 생성된 기관 관리자는 해당 기관 회원의 가입 승인 및 회원 관리를 수행합니다.
                 </p>
 
                 <form onSubmit={handleCreateAgencyAdmin} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1407,13 +1465,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     />
                   </div>
 
+                  <div className="sm:col-span-2 lg:col-span-3">
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">
+                      초기 배정 이벤트 상자 수량
+                    </label>
+                    <div className="flex items-center gap-2">
+                      {[100, 500, 1000, 3000, 5000].map((amt) => (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => setNewAdminInitialBoxes(amt)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ${
+                            newAdminInitialBoxes === amt
+                              ? 'bg-amber-500 text-stone-950'
+                              : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-700'
+                          }`}
+                        >
+                          +{amt.toLocaleString()}개
+                        </button>
+                      ))}
+                      <input
+                        type="number"
+                        min={0}
+                        step={100}
+                        value={newAdminInitialBoxes}
+                        onChange={(e) => setNewAdminInitialBoxes(Number(e.target.value))}
+                        className="w-32 bg-stone-900 border border-stone-700 rounded-xl px-3 py-1.5 text-xs text-white text-right focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
                   <div className="sm:col-span-2 lg:col-span-3 flex justify-end pt-2">
                     <button
                       type="submit"
-                      className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg shadow-amber-950/40"
+                      className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg shadow-amber-950/40 cursor-pointer"
                     >
                       <Plus className="w-4 h-4" />
-                      <span>기관 관리자 등록하기</span>
+                      <span>기관 담당자 등록하기</span>
                     </button>
                   </div>
                 </form>
@@ -1421,11 +1509,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               {/* Agency Admins List & Grant Boxes */}
               <div className="bg-stone-950/80 border border-stone-800 rounded-2xl overflow-hidden shadow-xl">
-                <div className="p-4 border-b border-stone-800 flex items-center justify-between">
+                <div className="p-4 border-b border-stone-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <h4 className="text-sm font-bold text-white flex items-center gap-2">
                     <span>등록된 기관 관리자 목록</span>
                     <span className="text-xs text-stone-400 font-mono">({allAdmins.length}명)</span>
                   </h4>
+
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                    <input
+                      type="text"
+                      value={agencyAdminSearchTerm}
+                      onChange={(e) => setAgencyAdminSearchTerm(e.target.value)}
+                      placeholder="기관명, 관리자명, 이메일 검색..."
+                      className="w-full bg-stone-900 border border-stone-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-500"
+                    />
+                    {agencyAdminSearchTerm && (
+                      <button
+                        onClick={() => setAgencyAdminSearchTerm('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -1441,47 +1548,58 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-stone-800/60">
-                      {allAdmins.map((admin, idx) => (
-                        <tr key={`admin-row-${admin.id}-${idx}`} className="hover:bg-stone-900/50 transition-colors">
-                          <td className="px-4 py-3">
-                            <div className="font-bold text-white">{admin.agencyName}</div>
-                            <div className="text-stone-400 font-mono text-[11px]">@{admin.agencyDomain}</div>
-                          </td>
+                      {allAdmins
+                        .filter((admin) => {
+                          if (!agencyAdminSearchTerm) return true;
+                          const term = agencyAdminSearchTerm.toLowerCase();
+                          return (
+                            admin.name?.toLowerCase().includes(term) ||
+                            admin.email?.toLowerCase().includes(term) ||
+                            admin.agencyName?.toLowerCase().includes(term) ||
+                            admin.agencyDomain?.toLowerCase().includes(term)
+                          );
+                        })
+                        .map((admin, idx) => (
+                          <tr key={`admin-row-${admin.id}-${idx}`} className="hover:bg-stone-900/50 transition-colors">
+                            <td className="px-4 py-3">
+                              <div className="font-bold text-white">{admin.agencyName}</div>
+                              <div className="text-stone-400 font-mono text-[11px]">@{admin.agencyDomain}</div>
+                            </td>
 
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-stone-200">{admin.name}</div>
-                            <div className="text-stone-400 font-mono text-[11px]">{admin.email}</div>
-                          </td>
+                            <td className="px-4 py-3">
+                              <div className="font-semibold text-stone-200">{admin.name}</div>
+                              <div className="text-stone-400 font-mono text-[11px]">{admin.email}</div>
+                            </td>
 
-                          <td className="px-4 py-3 text-stone-300">{admin.department || '-'}</td>
+                            <td className="px-4 py-3 text-stone-300">{admin.department || '-'}</td>
 
-                          <td className="px-4 py-3 text-stone-400 font-mono">{admin.passwordPlain}</td>
+                            <td className="px-4 py-3 text-stone-400 font-mono">{admin.passwordPlain}</td>
 
-                          <td className="px-4 py-3">
-                            <span className="font-bold text-amber-300 text-sm font-mono">
-                              {admin.eventBoxesRemaining?.toLocaleString() || 0}개
-                            </span>
-                          </td>
+                            <td className="px-4 py-3">
+                              <span className="font-bold text-amber-300 text-sm font-mono">
+                                {admin.eventBoxesRemaining?.toLocaleString() || 0}개
+                              </span>
+                            </td>
 
-                          <td className="px-4 py-3 text-right space-x-2">
-                            <button
-                              onClick={() => setGrantTargetAdmin(admin)}
-                              className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1"
-                            >
-                              <Gift className="w-3.5 h-3.5" />
-                              <span>상자 추가지급</span>
-                            </button>
+                            <td className="px-4 py-3 text-right space-x-2">
+                              <button
+                                onClick={() => setGrantTargetAdmin(admin)}
+                                className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1 cursor-pointer"
+                              >
+                                <Gift className="w-3.5 h-3.5" />
+                                <span>상자 추가지급</span>
+                              </button>
 
-                            <button
-                              onClick={() => handleDeleteAgencyAdmin(admin.id)}
-                              className="p-1.5 text-stone-500 hover:text-rose-400 rounded-lg transition-colors"
-                              title="관리자 삭제"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                              <button
+                                onClick={() => handleDeleteAgencyAdmin(admin.id)}
+                                className="p-1.5 text-stone-500 hover:text-rose-400 rounded-lg transition-colors cursor-pointer"
+                                title="관리자 삭제"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
                     </tbody>
                   </table>
                 </div>
@@ -1939,10 +2057,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <div>
                 <label className="text-xs font-semibold text-stone-400 mb-1 block">추가 지급할 이벤트 상자 수량</label>
+                <div className="flex items-center gap-1.5 mb-2">
+                  {[50, 100, 500, 1000, 5000].map((amt) => (
+                    <button
+                      key={amt}
+                      type="button"
+                      onClick={() => setGrantBoxesAmount(amt)}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-bold transition-colors ${
+                        grantBoxesAmount === amt
+                          ? 'bg-amber-500 text-stone-950'
+                          : 'bg-stone-800 text-amber-300 hover:bg-stone-700'
+                      }`}
+                    >
+                      +{amt.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
                 <input
                   type="number"
-                  min={100}
-                  step={100}
+                  min={1}
+                  step={10}
                   value={grantBoxesAmount}
                   onChange={(e) => setGrantBoxesAmount(Number(e.target.value))}
                   className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
@@ -1965,18 +2099,397 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <button
                   type="button"
                   onClick={() => setGrantTargetAdmin(null)}
-                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold"
+                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold cursor-pointer"
                 >
                   취소
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs cursor-pointer shadow-lg shadow-amber-950/40"
                 >
                   지급 확정하기
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: DIRECT SANCTION USER */}
+      {/* ========================================================================= */}
+      {sanctionTargetUser && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-rose-600/40 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-rose-500/20 text-rose-400 rounded-xl border border-rose-500/30">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">회원 직접 제재 조치</h3>
+                  <p className="text-xs text-stone-400">
+                    운영정책 위반 회원에 대해 즉시 이용제한 또는 영구차단을 적용합니다.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSanctionTargetUser(null)}
+                className="text-stone-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Target Summary */}
+            <div className="flex items-center gap-3 bg-stone-950 p-3 rounded-xl border border-stone-800 text-xs">
+              <img
+                src={sanctionTargetUser.photoUrl || getAvatarForUser(sanctionTargetUser.gender, sanctionTargetUser.id)}
+                alt={sanctionTargetUser.name}
+                className="w-10 h-10 rounded-xl object-cover border border-stone-700 bg-stone-900"
+              />
+              <div className="flex-1 overflow-hidden">
+                <div className="font-bold text-white flex items-center gap-2">
+                  <span>{sanctionTargetUser.name}</span>
+                  <span className="text-stone-400 font-normal">({sanctionTargetUser.company})</span>
+                </div>
+                <div className="text-stone-400 font-mono text-[11px]">{sanctionTargetUser.email}</div>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-stone-400 block">현재 누적 제재</span>
+                <span className="text-rose-400 font-bold font-mono text-xs">{sanctionTargetUser.sanctionCount || 0}회</span>
+              </div>
+            </div>
+
+            <form onSubmit={handleExecuteDirectSanction} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1.5 block">제재 수위 선택</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'warning_1h', label: '1차 주의/경고', desc: '1시간 서비스 주의 조치' },
+                    { id: 'restrict_24h', label: '24시간 정지', desc: '1일간 로그인/매칭 제한' },
+                    { id: 'restrict_7d', label: '7일 정지', desc: '일주일간 서비스 이용정지' },
+                    { id: 'permanent_ban', label: '영구 이용정지', desc: '영구 차단 및 블랙리스트' },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSanctionType(item.id as any)}
+                      className={`p-3 rounded-xl border text-left transition-all ${
+                        sanctionType === item.id
+                          ? 'bg-rose-500/20 border-rose-500 text-rose-200 shadow-md shadow-rose-950/40'
+                          : 'bg-stone-950/60 border-stone-800 text-stone-400 hover:border-stone-700'
+                      }`}
+                    >
+                      <div className="font-bold text-xs">{item.label}</div>
+                      <div className="text-[10px] text-stone-400 mt-0.5">{item.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1.5 block">제재 사유 분류</label>
+                <select
+                  value={sanctionReasonType}
+                  onChange={(e) => setSanctionReasonType(e.target.value)}
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-rose-500"
+                >
+                  <option value="부적절한 대화 및 비매너 언행">부적절한 대화 및 비매너 언행</option>
+                  <option value="허위 프로필 등록 및 사진 도용">허위 프로필 등록 및 사진 도용</option>
+                  <option value="스팸, 광고 및 상업적 목적 활동">스팸, 광고 및 상업적 목적 활동</option>
+                  <option value="불순한 만남 유도 및 개인정보 침해">불순한 만남 유도 및 개인정보 침해</option>
+                  <option value="운영자/관리자 지시 불이행 및 기타 위반">운영자/관리자 지시 불이행 및 기타 위반</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1 block">
+                  상세 사유 및 관리자 메모 (선택)
+                </label>
+                <textarea
+                  rows={3}
+                  value={sanctionCustomReason}
+                  onChange={(e) => setSanctionCustomReason(e.target.value)}
+                  placeholder="구체적인 위반 내역 또는 관리자 처리 사유를 기재하세요."
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-stone-800">
+                <button
+                  type="button"
+                  onClick={() => setSanctionTargetUser(null)}
+                  className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-lg shadow-rose-950/50"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>제재 즉시 적용</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: DIRECT LIFT SANCTION */}
+      {/* ========================================================================= */}
+      {liftTargetUser && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-emerald-600/40 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+                  <Unlock className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">회원 제재 해제 및 정상화</h3>
+                  <p className="text-xs text-stone-400">
+                    소명 확인 또는 오인 조치로 인해 제한된 회원의 이용 상태를 즉시 복구합니다.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setLiftTargetUser(null)}
+                className="text-stone-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Target Summary */}
+            <div className="flex items-center gap-3 bg-stone-950 p-3 rounded-xl border border-stone-800 text-xs">
+              <img
+                src={liftTargetUser.photoUrl || getAvatarForUser(liftTargetUser.gender, liftTargetUser.id)}
+                alt={liftTargetUser.name}
+                className="w-10 h-10 rounded-xl object-cover border border-stone-700 bg-stone-900"
+              />
+              <div className="flex-1 overflow-hidden">
+                <div className="font-bold text-white flex items-center gap-2">
+                  <span>{liftTargetUser.name}</span>
+                  <span className="text-stone-400 font-normal">({liftTargetUser.company})</span>
+                </div>
+                <div className="text-stone-400 font-mono text-[11px]">{liftTargetUser.email}</div>
+                {liftTargetUser.sanctionReason && (
+                  <div className="text-rose-300 text-[10px] mt-0.5 truncate">
+                    기존 제재: {liftTargetUser.sanctionReason}
+                  </div>
+                )}
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] text-stone-400 block">제재 상태</span>
+                <span className="text-amber-400 font-bold text-xs">
+                  {liftTargetUser.isBanned ? '영구 차단중' : '이용 제한중'}
+                </span>
+              </div>
+            </div>
+
+            <form onSubmit={handleExecuteDirectLiftSanction} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1 block">해제 사유</label>
+                <input
+                  type="text"
+                  value={liftReason}
+                  onChange={(e) => setLiftReason(e.target.value)}
+                  placeholder="예: 소명자료 확인 완료 및 오해 해소"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1 block">
+                  보상 환영박스 지급 수량 (선택)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={20}
+                  value={liftCompensationBoxes}
+                  onChange={(e) => setLiftCompensationBoxes(Number(e.target.value))}
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+                <span className="text-[11px] text-stone-400 mt-1 block">
+                  오인 제재에 대한 사과 또는 격려 목적으로 환영박스를 함께 선물할 수 있습니다. (0이면 미지급)
+                </span>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-300 mb-1 block">
+                  회원 알림 메시지 (선택)
+                </label>
+                <textarea
+                  rows={2}
+                  value={liftNoticeMessage}
+                  onChange={(e) => setLiftNoticeMessage(e.target.value)}
+                  placeholder="예: 제출해주신 소명 내용이 확인되어 정상 이용 가능하도록 조치되었습니다."
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-stone-800">
+                <button
+                  type="button"
+                  onClick={() => setLiftTargetUser(null)}
+                  className="px-4 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 cursor-pointer shadow-lg shadow-emerald-950/50"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>제재 해제 및 정상화 확정</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: USER DETAILS MODAL */}
+      {/* ========================================================================= */}
+      {selectedUserDetail && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-700 rounded-2xl max-w-xl w-full p-6 space-y-5 shadow-2xl animate-scaleUp max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Eye className="w-5 h-5 text-rose-400" />
+                <h3 className="text-base font-bold text-white">회원 상세 정보 및 이력</h3>
+              </div>
+              <button
+                onClick={() => setSelectedUserDetail(null)}
+                className="text-stone-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Profile Overview */}
+            <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 bg-stone-950 p-4 rounded-2xl border border-stone-800">
+              <img
+                src={selectedUserDetail.photoUrl || getAvatarForUser(selectedUserDetail.gender, selectedUserDetail.id)}
+                alt={selectedUserDetail.name}
+                className="w-20 h-20 rounded-2xl object-cover border-2 border-stone-700 bg-stone-900 shadow-md"
+              />
+              <div className="flex-1 text-center sm:text-left space-y-1">
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                  <h4 className="text-lg font-bold text-white">{selectedUserDetail.name}</h4>
+                  <span className="text-xs text-stone-400 font-medium">
+                    ({selectedUserDetail.gender === 'female' ? '여성' : '남성'}, {selectedUserDetail.age || calculateAge(selectedUserDetail.birthDate)}세)
+                  </span>
+                  <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold px-2 py-0.5 rounded">
+                    공직자인증 완료
+                  </span>
+                </div>
+                <p className="text-xs text-rose-300 font-semibold">{selectedUserDetail.company}</p>
+                <p className="text-xs text-stone-400 font-mono">{selectedUserDetail.email}</p>
+                <div className="flex items-center justify-center sm:justify-start gap-3 pt-1 text-xs text-stone-400">
+                  <span>호감도: <strong className="text-amber-300 font-mono">{selectedUserDetail.popularity || 0}점</strong></span>
+                  <span>누적 출석: <strong className="text-stone-200 font-mono">{selectedUserDetail.attendanceDays || 1}일</strong></span>
+                  <span>제재 횟수: <strong className="text-rose-400 font-mono">{selectedUserDetail.sanctionCount || 0}회</strong></span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bio & Interests */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-stone-400">자기소개</span>
+              <div className="bg-stone-950 p-3.5 rounded-xl border border-stone-800 text-xs text-stone-200 leading-relaxed">
+                {selectedUserDetail.bio || '등록된 자기소개가 없습니다.'}
+              </div>
+            </div>
+
+            {selectedUserDetail.interests && selectedUserDetail.interests.length > 0 && (
+              <div className="space-y-1.5">
+                <span className="text-xs font-bold text-stone-400">관심사 키워드</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedUserDetail.interests.map((item, i) => (
+                    <span key={i} className="bg-stone-800 text-stone-300 px-2.5 py-1 rounded-lg text-xs font-medium border border-stone-700">
+                      #{item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Current Sanction Status */}
+            {(selectedUserDetail.isBanned || (selectedUserDetail.sanctionExpiresAt && selectedUserDetail.sanctionExpiresAt > Date.now()) || (selectedUserDetail.sanctionCount && selectedUserDetail.sanctionCount > 0)) && (
+              <div className="bg-rose-950/40 border border-rose-500/40 rounded-xl p-3.5 space-y-1 text-xs">
+                <div className="flex items-center justify-between text-rose-300 font-bold">
+                  <span className="flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-rose-400" />
+                    제재 상태 안내
+                  </span>
+                  <span>
+                    {selectedUserDetail.isBanned
+                      ? '영구 이용정지 (블랙리스트)'
+                      : selectedUserDetail.sanctionExpiresAt && selectedUserDetail.sanctionExpiresAt > Date.now()
+                      ? `제재 진행중 (${Math.ceil((selectedUserDetail.sanctionExpiresAt - Date.now()) / (3600 * 1000))}시간 남음)`
+                      : `누적 ${selectedUserDetail.sanctionCount}회 이력`}
+                  </span>
+                </div>
+                {selectedUserDetail.sanctionReason && (
+                  <p className="text-stone-300 text-[11px] mt-1">
+                    사유: {selectedUserDetail.sanctionReason}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Action Buttons in Modal */}
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-stone-800">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleOpenGiftModal(selectedUserDetail);
+                  }}
+                  className="px-3 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <Gift className="w-3.5 h-3.5" />
+                  <span>1:1 선물 지급</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleOpenSanctionModal(selectedUserDetail);
+                  }}
+                  className="px-3 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>직접 제재 조치</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleOpenLiftModal(selectedUserDetail);
+                  }}
+                  className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  <span>제재 해제 및 정상화</span>
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedUserDetail(null)}
+                className="px-4 py-2 bg-stone-800 text-stone-300 hover:text-white rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                닫기
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -73,20 +73,20 @@ export interface TimeRewardStatus {
 }
 
 export class ItemService {
-  // Get or initialize User Inventory (Set to 999 for test period)
+  // Get or initialize User Inventory (Initial starter: 10 message tickets, 0 of all other items)
   static getInventory(userId: string): UserInventory {
     try {
       const raw = localStorage.getItem(`${INVENTORY_STORAGE_KEY}_${userId}`);
       if (raw) {
         const parsed = JSON.parse(raw);
         const inv: UserInventory = {
-          welcomeBoxes: Math.max(999, parsed.welcomeBoxes ?? 999),
-          boostAntennas: Math.max(999, parsed.boostAntennas ?? 999),
+          welcomeBoxes: Number(parsed.welcomeBoxes) || 0,
+          boostAntennas: Number(parsed.boostAntennas) || 0,
           boostRadiusExpiresAt: parsed.boostRadiusExpiresAt ?? null,
-          messageTickets: Math.max(999, parsed.messageTickets ?? 999),
-          popularityMessages: Math.max(999, parsed.popularityMessages ?? 999),
-          stickerCards: Math.max(999, parsed.stickerCards ?? 999),
-          bonusMessagesToday: parsed.bonusMessagesToday ?? 0,
+          messageTickets: parsed.messageTickets !== undefined ? Number(parsed.messageTickets) : 10,
+          popularityMessages: Number(parsed.popularityMessages) || 0,
+          stickerCards: Number(parsed.stickerCards) || 0,
+          bonusMessagesToday: Number(parsed.bonusMessagesToday) || 0,
         };
         return inv;
       }
@@ -94,14 +94,14 @@ export class ItemService {
       console.warn('Failed to load inventory', e);
     }
 
-    // Initial starter inventory: 999 of all items for testing period
+    // Initial starter inventory: Only 10 message tickets, all other items are 0
     const initial: UserInventory = {
-      welcomeBoxes: 999,
-      boostAntennas: 999,
+      welcomeBoxes: 0,
+      boostAntennas: 0,
       boostRadiusExpiresAt: null,
-      messageTickets: 999,
-      popularityMessages: 999,
-      stickerCards: 999,
+      messageTickets: 10,
+      popularityMessages: 0,
+      stickerCards: 0,
       bonusMessagesToday: 0,
     };
     this.saveInventory(userId, initial);

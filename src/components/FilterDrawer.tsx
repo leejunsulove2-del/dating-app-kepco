@@ -202,7 +202,7 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
                   className="w-full py-2 px-3 bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
                 >
                   <Radio className="w-3.5 h-3.5" />
-                  <span>광역 검색 안테나 1개 사용 (보유: {inv?.boostAntennas ?? 999}개)</span>
+                  <span>광역 검색 안테나 1개 사용 (보유: {inv?.boostAntennas ?? 0}개)</span>
                 </button>
               </div>
             )}
@@ -423,7 +423,7 @@ export const FilterDrawer: React.FC<FilterDrawerProps> = ({
                   </p>
                   <div className="pt-1 flex items-center justify-between text-[11px] font-bold text-stone-700">
                     <span>보유 안테나</span>
-                    <span className="text-rose-600 font-mono font-black">{inv?.boostAntennas ?? 999}개 보유</span>
+                    <span className="text-rose-600 font-mono font-black">{inv?.boostAntennas ?? 0}개 보유</span>
                   </div>
                 </div>
 
