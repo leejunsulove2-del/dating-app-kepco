@@ -32,7 +32,8 @@ function leafletSafePlugin(): Plugin {
 }
 
 export default defineConfig(() => ({
-  base: process.env.VITE_BASE_PATH || '/',
+  // GitHub Pages 저장소 경로에 맞게 고정값으로 수정
+  base: "/dating-app-kepco/",
   plugins: [leafletSafePlugin(), react(), tailwindcss()],
   resolve: {
     alias: {
