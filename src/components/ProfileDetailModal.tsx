@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { X, Heart, MessageCircle, Building2, MapPin, Sparkles, Calendar, ShieldCheck, ThumbsUp, ThumbsDown, Plus, Flame, Tag, Type, Check } from 'lucide-react';
+import { X, Heart, MessageCircle, Building2, MapPin, Sparkles, Calendar, ShieldCheck, ThumbsUp, ThumbsDown, Plus, Flame, Tag, Type, Check, ShieldAlert } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { UserProfile, ProfileSticker } from '../types';
 import { formatDistance, getUserActiveStatus } from '../utils/geo';
 import { DatingService } from '../services/datingService';
 import { ItemService } from '../services/itemService';
 import { AVAILABLE_STICKERS } from '../services/mockProfiles';
+import { ReportModal } from './ReportModal';
+import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
 
 interface ProfileDetailModalProps {
   user: UserProfile | null;
@@ -39,6 +41,8 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
   const [customText, setCustomText] = useState('');
   const [popularityNotice, setPopularityNotice] = useState<string | null>(null);
   const [stickerNotice, setStickerNotice] = useState<string | null>(null);
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportSuccessNotice, setReportSuccessNotice] = useState<string | null>(null);
 
   // Synchronize state whenever user profile or currentUserId changes
   useEffect(() => {
@@ -175,21 +179,37 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
         {/* Profile Image & Top Actions */}
         <div className="relative h-56 sm:h-64 w-full bg-stone-900 shrink-0">
           <img
-            src={user.photoUrl}
+            src={user.photoUrl || getAvatarForUser(user.gender, user.id)}
             alt={user.name}
+            onError={(e) => handleAvatarError(e, user.gender, user.id)}
             className="w-full h-full object-cover"
           />
           <div className="absolute inset-0 bg-gradient-to-t from-stone-950/85 via-stone-950/20 to-black/30"></div>
 
-          {/* Close Button */}
-          <button
-            type="button"
-            id="close-profile-detail-btn"
-            onClick={onClose}
-            className="absolute top-4 right-4 w-9 h-9 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center backdrop-blur-md transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {/* Top Action Buttons (Close & Small Report Button) */}
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            {!isSelf && (
+              <button
+                type="button"
+                id="open-report-user-btn"
+                onClick={() => setIsReportModalOpen(true)}
+                title="부적절한 사용자 신고하기"
+                className="px-2.5 py-1 rounded-full bg-black/40 hover:bg-red-600/85 text-white/90 hover:text-white text-[11px] font-medium flex items-center gap-1 backdrop-blur-md transition cursor-pointer border border-white/10 shadow"
+              >
+                <ShieldAlert className="w-3 h-3 text-red-300" />
+                <span>신고</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              id="close-profile-detail-btn"
+              onClick={onClose}
+              className="w-8 h-8 rounded-full bg-black/40 hover:bg-black/60 text-white flex items-center justify-center backdrop-blur-md transition cursor-pointer border border-white/10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
 
           {/* Distance & Online Pill */}
           <div className="absolute top-4 left-4 flex items-center gap-1.5 flex-wrap">
@@ -589,6 +609,30 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Report Modal */}
+      {isReportModalOpen && (
+        <ReportModal
+          isOpen={isReportModalOpen}
+          currentUser={{ id: currentUserId } as UserProfile}
+          targetUser={user}
+          onClose={() => setIsReportModalOpen(false)}
+          onReportSubmitted={(msg) => {
+            setReportSuccessNotice(msg);
+            onProfileUpdated?.();
+            setTimeout(() => {
+              onClose();
+            }, 1800);
+          }}
+        />
+      )}
+
+      {/* Report Success Toast */}
+      {reportSuccessNotice && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-stone-900 text-white text-xs px-4 py-3 rounded-2xl shadow-xl border border-stone-700 max-w-sm text-center animate-in fade-in slide-in-from-bottom-4">
+          {reportSuccessNotice}
+        </div>
+      )}
     </div>
   );
 };

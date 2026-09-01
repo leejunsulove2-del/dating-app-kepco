@@ -28,6 +28,7 @@ import { ItemService } from '../services/itemService';
 import { DatingService } from '../services/datingService';
 import { formatDistance } from '../utils/geo';
 import { soundManager } from '../utils/sound';
+import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
 
 interface ChatModalProps {
   isOpen: boolean;
@@ -345,8 +346,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({
             {/* Target Avatar with online badge */}
             <div className="relative w-11 h-11 rounded-full overflow-hidden border border-stone-200 shadow-xs shrink-0 bg-stone-100">
               <img
-                src={targetUser.photoUrl}
+                src={targetUser.photoUrl || getAvatarForUser(targetUser.gender, targetUser.id)}
                 alt={targetUser.name}
+                onError={(e) => handleAvatarError(e, targetUser.gender, targetUser.id)}
                 className="w-full h-full object-cover"
               />
               <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></span>
@@ -524,8 +526,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({
                         {/* Opponent Profile Avatar */}
                         <div className="w-9 h-9 rounded-full overflow-hidden border border-white/60 shadow-xs shrink-0 mt-0.5 bg-white">
                           <img
-                            src={targetUser.photoUrl}
+                            src={targetUser.photoUrl || getAvatarForUser(targetUser.gender, targetUser.id)}
                             alt={targetUser.name}
+                            onError={(e) => handleAvatarError(e, targetUser.gender, targetUser.id)}
                             className="w-full h-full object-cover"
                           />
                         </div>

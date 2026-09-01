@@ -1,6 +1,6 @@
 {
-  "name": "연애 앱 (Dating App)",
-  "description": "위치 기반 주변 사용자 탐색 및 프로필 매칭 연애 앱",
+  "name": "공공기관 매칭 시스템",
+  "description": "위치 기반 주변 사용자 탐색 및 프로필 매칭 공공기관 매칭 시스템",
   "requestFramePermissions": [
     "geolocation"
   ],

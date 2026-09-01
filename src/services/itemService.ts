@@ -575,4 +575,33 @@ export class ItemService {
       message,
     };
   }
+
+  // Admin & Event Direct Grant Helpers
+  static addWelcomeBoxes(userId: string, count: number): number {
+    const inv = this.getInventory(userId);
+    inv.welcomeBoxes = (inv.welcomeBoxes || 0) + count;
+    this.saveInventory(userId, inv);
+    return inv.welcomeBoxes;
+  }
+
+  static addBoostAntenna(userId: string, count: number): number {
+    const inv = this.getInventory(userId);
+    inv.boostAntennas = (inv.boostAntennas || 0) + count;
+    this.saveInventory(userId, inv);
+    return inv.boostAntennas;
+  }
+
+  static addMessageTickets(userId: string, count: number): number {
+    const inv = this.getInventory(userId);
+    inv.messageTickets = (inv.messageTickets || 0) + count;
+    this.saveInventory(userId, inv);
+    return inv.messageTickets;
+  }
+
+  static addStickerCards(userId: string, count: number): number {
+    const inv = this.getInventory(userId);
+    inv.stickerCards = (inv.stickerCards || 0) + count;
+    this.saveInventory(userId, inv);
+    return inv.stickerCards;
+  }
 }

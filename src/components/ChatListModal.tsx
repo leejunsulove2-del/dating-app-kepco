@@ -13,6 +13,7 @@ import { UserProfile, ChatRoom } from '../types';
 import { FirebaseChatService } from '../services/firebaseChatService';
 import { DatingService } from '../services/datingService';
 import { formatDistance } from '../utils/geo';
+import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
 
 interface ChatListModalProps {
   isOpen: boolean;
@@ -228,8 +229,9 @@ export const ChatListModal: React.FC<ChatListModalProps> = ({
                 >
                   <div className="relative w-12 h-12 rounded-2xl overflow-hidden bg-stone-100 shrink-0 border border-stone-100">
                     <img
-                      src={partner.photoUrl}
+                      src={partner.photoUrl || getAvatarForUser(partner.gender, partner.id)}
                       alt={partner.name}
+                      onError={(e) => handleAvatarError(e, partner.gender, partner.id)}
                       className="w-full h-full object-cover"
                     />
                     <span className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 border-2 border-white rounded-full"></span>

@@ -1,21 +1,43 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, Plugin} from 'vite';
+
+function leafletSafePlugin(): Plugin {
+  return {
+    name: 'vite-plugin-leaflet-safe',
+    enforce: 'pre',
+    transform(code: string, id: string) {
+      if (id.includes('leaflet')) {
+        let transformed = code;
+        transformed = transformed.replace(
+          /return\s+([a-zA-Z0-9_$]+)\._leaflet_pos\s*\|\|\s*new\s+Point\(0,\s*0\);/g,
+          'return ($1 && $1._leaflet_pos) ? $1._leaflet_pos : new Point(0, 0);'
+        );
+        transformed = transformed.replace(
+          /([a-zA-Z0-9_$]+)\._leaflet_pos\s*=\s*([a-zA-Z0-9_$]+);/g,
+          'if ($1) { $1._leaflet_pos = $2; }'
+        );
+        return {
+          code: transformed,
+          map: null,
+        };
+      }
+      return null;
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [leafletSafePlugin(), react(), tailwindcss()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

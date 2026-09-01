@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { UserProfile, UserLocation, FilterOptions } from './types';
+import { UserProfile, UserLocation, FilterOptions, AdminAccount } from './types';
 import { DatingService } from './services/datingService';
 import { FirebaseChatService } from './services/firebaseChatService';
 import { ItemService } from './services/itemService';
+import { AdminService } from './services/adminService';
 import { AuthModal } from './components/AuthModal';
 import { ProfileSetupModal } from './components/ProfileSetupModal';
 import { LocationConsentModal } from './components/LocationConsentModal';
@@ -17,8 +18,14 @@ import { AttendanceWelcomeModal } from './components/AttendanceWelcomeModal';
 import { TimeRewardModal } from './components/TimeRewardModal';
 import { InventoryModal } from './components/InventoryModal';
 import { BoxOpenModal } from './components/BoxOpenModal';
+import { AdminDashboard } from './components/AdminDashboard';
+import { SanctionNoticeModal } from './components/SanctionNoticeModal';
 
 export default function App() {
+  const [currentAdmin, setCurrentAdmin] = useState<AdminAccount | null>(() => {
+    return AdminService.getCurrentAdminSession();
+  });
+
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
     return DatingService.getCurrentUser();
   });
@@ -155,8 +162,15 @@ export default function App() {
     };
   }, [currentUser?.id]);
 
-  // Check login, location consent & daily attendance prompt upon mount
+  // Check login, location consent & daily attendance prompt upon mount + DB Optimization Sweep
   useEffect(() => {
+    // Run 72-hour TTL message purge & local storage DB optimization
+    try {
+      FirebaseChatService.purgeExpiredAndOptimizeMessages();
+    } catch {
+      // ignore
+    }
+
     DatingService.initDatabase(currentLocation.latitude, currentLocation.longitude);
     requestAccurateLocation(true);
 
@@ -190,7 +204,7 @@ export default function App() {
           }
         }
       }
-    } else {
+    } else if (!currentAdmin) {
       setAuthModalOpen(true);
     }
   }, []);
@@ -354,6 +368,18 @@ export default function App() {
     setAuthModalOpen(true);
   };
 
+  const handleAdminLogin = (admin: AdminAccount) => {
+    AdminService.saveCurrentAdminSession(admin);
+    setCurrentAdmin(admin);
+    setAuthModalOpen(false);
+  };
+
+  const handleAdminLogout = () => {
+    AdminService.saveCurrentAdminSession(null);
+    setCurrentAdmin(null);
+    setAuthModalOpen(true);
+  };
+
   const handleStartChatFromProfile = (target: UserProfile) => {
     setSelectedProfile(null);
     setChatTarget(target);
@@ -428,6 +454,16 @@ export default function App() {
   // Get active search radius (1km base or user-selected distance up to 30km when antenna is active)
   const isAntennaActive = currentUser ? ItemService.isBoostRadiusActive(currentUser.id) : false;
   const activeRadiusKm = isAntennaActive ? filter.maxDistanceKm : 1.0;
+
+  // If logged in as Admin, render Admin Dashboard interface
+  if (currentAdmin) {
+    return (
+      <AdminDashboard
+        currentAdmin={currentAdmin}
+        onLogout={handleAdminLogout}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-stone-100 font-sans text-stone-900">
@@ -505,7 +541,17 @@ export default function App() {
       <AuthModal
         isOpen={authModalOpen}
         onSuccess={handleAuthSuccess}
+        onAdminLogin={handleAdminLogin}
       />
+
+      {/* Active Sanctions / Ban / Compensation Modal */}
+      {currentUser && (
+        <SanctionNoticeModal
+          user={currentUser}
+          onLogout={handleLogout}
+          onRewardClaimed={triggerInventoryReload}
+        />
+      )}
 
       {tempUserForSetup && (
         <ProfileSetupModal

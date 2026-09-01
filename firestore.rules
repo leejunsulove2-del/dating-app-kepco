@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check authentication
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to verify user owns document
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Users Collection - public profiles readable by logged in users, updated by owners
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId);
+    }
+
+    // Pending registrations & approvals for admin
+    match /pending_registrations/{regId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Allowed Domains
+    match /allowed_domains/{domainId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Chat Rooms and Messages
+    match /chat_rooms/{roomId} {
+      allow read, write: if isAuthenticated();
+      
+      match /messages/{messageId} {
+        allow read, write: if isAuthenticated();
+      }
+    }
+
+    // Match actions & likes
+    match /likes/{likeId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // Reports and Admin Logs
+    match /admin_logs/{logId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    match /reports/{reportId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isAuthenticated();
+    }
+  }
+}

@@ -357,6 +357,14 @@ export class FirebaseChatService {
   }
 
   /**
+   * Get direct stored messages for two users
+   */
+  public static getMessagesForUsers(userId1: string, userId2: string): ChatMessage[] {
+    const roomId = this.getRoomId(userId1, userId2);
+    return this.getRoomMessagesDirect(roomId);
+  }
+
+  /**
    * Send a Realtime Chat Message
    */
   public static async sendMessage(
@@ -602,6 +610,45 @@ export class FirebaseChatService {
         }
       }
     }
+  }
+
+  /**
+   * 72시간(3일) 초과 대화 만료 삭제 및 양측 읽음 완료 대화 로컬 브라우저 저장 최적화
+   * Requirement:
+   * "사용자간 대화는 해당 사용자브라우저에 저장하게 하여 데이터베이스는 일시적으로만 대화를 저장하고
+   * 양측 사용자가 대화(텍스트)를 읽으면 대화를 사용자 브라우저에 저장.
+   * 양측이 읽지 않아도 발생 72시간이 넘는경우 대화방 내 모든 대화를 삭제해서 데이터베이스 최적화"
+   */
+  public static readonly MESSAGE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
+
+  public static purgeExpiredAndOptimizeMessages(): { purgedCount: number; activeRooms: number } {
+    const now = Date.now();
+    const allMsgs = getStoredMessages();
+    let purgedCount = 0;
+    const roomKeys = Object.keys(allMsgs);
+
+    roomKeys.forEach((roomId) => {
+      const msgs = allMsgs[roomId] || [];
+      const remaining: ChatMessage[] = [];
+
+      msgs.forEach((m) => {
+        const isOlderThan72h = now - m.timestamp > this.MESSAGE_TTL_MS;
+        if (isOlderThan72h) {
+          // 72시간 초과 시 영구 만료 삭제
+          purgedCount++;
+        } else {
+          remaining.push(m);
+        }
+      });
+
+      allMsgs[roomId] = remaining;
+    });
+
+    if (purgedCount > 0) {
+      saveStoredMessages(allMsgs);
+    }
+
+    return { purgedCount, activeRooms: roomKeys.length };
   }
 
   /**

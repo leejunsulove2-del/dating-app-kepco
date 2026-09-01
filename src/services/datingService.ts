@@ -2,6 +2,7 @@ import { UserProfile, UserLocation, LikeAction, ChatMessage, FilterOptions } fro
 import { calculateDistanceKm, getRandomCoordinateNearby, calculateAge } from '../utils/geo';
 import { INITIAL_PROFILES } from './mockProfiles';
 import { FirebaseChatService } from './firebaseChatService';
+import { getAvatarForUser } from '../utils/avatarUtils';
 
 const USERS_STORAGE_KEY = 'love_app_users';
 const CURRENT_USER_KEY = 'love_app_current_user';
@@ -14,6 +15,15 @@ const ALLOWED_DOMAINS_KEY = 'love_app_allowed_email_domains';
 export interface AllowedDomainItem {
   domain: string;
   companyName: string;
+}
+
+export function isTestAccountProfile(u: Partial<UserProfile> | null | undefined): boolean {
+  if (!u || !u.id) return false;
+  if (u.isTestAccount === true) return true;
+  if (u.id.startsWith('mock_user_') || u.id.startsWith('demo_user_') || u.id.startsWith('seed_user_')) return true;
+  // INITIAL_PROFILES uses user_1 ... user_12
+  if (/^user_[0-9]{1,2}$/.test(u.id)) return true;
+  return false;
 }
 
 export const DEFAULT_ALLOWED_DOMAINS: AllowedDomainItem[] = [
@@ -46,10 +56,53 @@ export class DatingService {
     forceRelocate = false
   ): void {
     const existingUsersJson = localStorage.getItem(USERS_STORAGE_KEY);
-    let users: UserProfile[] = existingUsersJson ? JSON.parse(existingUsersJson) : [];
+    let users: UserProfile[] = [];
+    try {
+      users = existingUsersJson ? JSON.parse(existingUsersJson) : [];
+    } catch {
+      users = [];
+    }
 
-    const testUsers = users.filter((u) => u.isTestAccount);
-    const nonTestUsers = users.filter((u) => !u.isTestAccount);
+    // Migrate any old .webp photoUrls to valid .svg or SVG Data-URIs
+    let hasMigration = false;
+    users = users.map((u) => {
+      if (u && u.photoUrl && (u.photoUrl.endsWith('.webp') || (!u.photoUrl.startsWith('data:') && !u.photoUrl.endsWith('.svg')))) {
+        hasMigration = true;
+        const isFemale = u.gender === 'female';
+        const num = (parseInt(u.id.replace(/\D/g, ''), 10) || 1) % 5 + 1;
+        const newUrl = isFemale ? `/assets/profiles/woman_${num}.svg` : `/assets/profiles/man_${num}.svg`;
+        return { ...u, photoUrl: newUrl };
+      }
+      return u;
+    });
+    if (hasMigration) {
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+      const curUser = this.getCurrentUser();
+      if (curUser && curUser.photoUrl && (curUser.photoUrl.endsWith('.webp') || (!curUser.photoUrl.startsWith('data:') && !curUser.photoUrl.endsWith('.svg')))) {
+        const isFemale = curUser.gender === 'female';
+        const num = (parseInt(curUser.id.replace(/\D/g, ''), 10) || 1) % 5 + 1;
+        curUser.photoUrl = isFemale ? `/assets/profiles/woman_${num}.svg` : `/assets/profiles/man_${num}.svg`;
+        this.saveCurrentUser(curUser);
+      }
+    }
+
+    // Filter true non-test users and deduplicate
+    const nonTestUsersMap = new Map<string, UserProfile>();
+    const testUsers: UserProfile[] = [];
+
+    for (const u of users) {
+      if (!u || !u.id) continue;
+      const isTest = isTestAccountProfile(u);
+      if (isTest) {
+        testUsers.push(u);
+      } else {
+        if (!nonTestUsersMap.has(u.id)) {
+          nonTestUsersMap.set(u.id, u);
+        }
+      }
+    }
+
+    const nonTestUsers = Array.from(nonTestUsersMap.values());
 
     // Relocate if no test users exist, forceRelocate is true, or test users are far from current location (> 2km)
     const needsLocationRebase =
@@ -61,9 +114,26 @@ export class DatingService {
 
     if (needsLocationRebase) {
       const generatedTestUsers = this.generateTestAccountsAround(currentLat, currentLng);
-      // Combine with non-test real users
-      const allUsers = [...nonTestUsers, ...generatedTestUsers];
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+      // Combine with non-test real users and deduplicate strictly by id
+      const allUsersMap = new Map<string, UserProfile>();
+      for (const u of nonTestUsers) {
+        allUsersMap.set(u.id, u);
+      }
+      for (const u of generatedTestUsers) {
+        allUsersMap.set(u.id, u);
+      }
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(Array.from(allUsersMap.values())));
+    } else {
+      // Clean up any duplicates in existing storage
+      const allUsersMap = new Map<string, UserProfile>();
+      for (const u of users) {
+        if (u && u.id) {
+          allUsersMap.set(u.id, u);
+        }
+      }
+      if (allUsersMap.size !== users.length) {
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(Array.from(allUsersMap.values())));
+      }
     }
   }
 
@@ -130,9 +200,7 @@ export class DatingService {
    */
   public static deleteAllTestAccounts(): { count: number; remainingCount: number } {
     const allUsers = this.getAllUsers();
-    const nonTestUsers = allUsers.filter(
-      (u) => !u.isTestAccount && !u.id.startsWith('user_') && !u.id.startsWith('demo_user_')
-    );
+    const nonTestUsers = allUsers.filter((u) => !isTestAccountProfile(u));
     const deletedCount = allUsers.length - nonTestUsers.length;
 
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(nonTestUsers));
@@ -140,7 +208,7 @@ export class DatingService {
     // Also clean messages from test accounts
     const allMessages = this.getMessages();
     const cleanMessages = allMessages.filter(
-      (m) => !m.senderId.startsWith('user_') && !m.receiverId.startsWith('user_')
+      (m) => !isTestAccountProfile({ id: m.senderId }) && !isTestAccountProfile({ id: m.receiverId })
     );
     localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(cleanMessages));
 
@@ -155,9 +223,7 @@ export class DatingService {
     currentLng = this.DEFAULT_CENTER.longitude
   ): UserProfile[] {
     const allUsers = this.getAllUsers();
-    const nonTestUsers = allUsers.filter(
-      (u) => !u.isTestAccount && !u.id.startsWith('user_') && !u.id.startsWith('demo_user_')
-    );
+    const nonTestUsers = allUsers.filter((u) => !isTestAccountProfile(u));
     const newTestUsers = this.generateTestAccountsAround(currentLat, currentLng);
     const combined = [...nonTestUsers, ...newTestUsers];
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(combined));
@@ -185,7 +251,7 @@ export class DatingService {
    */
   public static hasTestAccounts(): boolean {
     const allUsers = this.getAllUsers();
-    return allUsers.some((u) => u.isTestAccount || u.id.startsWith('user_') || u.id.startsWith('demo_user_'));
+    return allUsers.some((u) => isTestAccountProfile(u));
   }
 
   /**
@@ -405,31 +471,47 @@ export class DatingService {
   public static saveCurrentUser(user: UserProfile): void {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
     
-    // Also update in all users collection
+    // Also update in all users collection uniquely
     const allUsers = this.getAllUsers();
-    const idx = allUsers.findIndex((u) => u.id === user.id);
-    if (idx >= 0) {
-      allUsers[idx] = user;
-    } else {
-      allUsers.push(user);
+    const userMap = new Map<string, UserProfile>();
+    for (const u of allUsers) {
+      if (u && u.id) {
+        userMap.set(u.id, u);
+      }
     }
-    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+    userMap.set(user.id, user);
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(Array.from(userMap.values())));
   }
 
   /**
-   * Get all registered users
+   * Get all registered users (Guaranteed unique by id)
    */
   public static getAllUsers(): UserProfile[] {
     const json = localStorage.getItem(USERS_STORAGE_KEY);
+    let rawUsers: UserProfile[] = [];
     if (!json) {
       this.initDatabase();
-      return JSON.parse(localStorage.getItem(USERS_STORAGE_KEY) || '[]');
+      try {
+        rawUsers = JSON.parse(localStorage.getItem(USERS_STORAGE_KEY) || '[]');
+      } catch {
+        rawUsers = [];
+      }
+    } else {
+      try {
+        rawUsers = JSON.parse(json);
+      } catch {
+        rawUsers = [];
+      }
     }
-    try {
-      return JSON.parse(json);
-    } catch {
-      return [];
+
+    // Always deduplicate strictly by id
+    const uniqueMap = new Map<string, UserProfile>();
+    for (const u of rawUsers) {
+      if (u && u.id && !uniqueMap.has(u.id)) {
+        uniqueMap.set(u.id, u);
+      }
     }
+    return Array.from(uniqueMap.values());
   }
 
   /**
@@ -458,10 +540,13 @@ export class DatingService {
     filter: FilterOptions
   ): UserProfile[] {
     const allUsers = this.getAllUsers();
+    const seenIds = new Set<string>();
 
     return allUsers
       .filter((user) => {
+        if (!user || !user.id) return false;
         if (user.id === currentUserId) return false;
+        if (seenIds.has(user.id)) return false;
         if (!user.location) return false;
 
         // Gender filter
@@ -490,6 +575,7 @@ export class DatingService {
           return false;
         }
 
+        seenIds.add(user.id);
         return true;
       })
       .map((user) => {
@@ -610,6 +696,23 @@ export class DatingService {
     return msg;
   }
 
+  /**
+   * Get random profile avatar from asset directory according to gender
+   * 남자는 귀여운 강아지(dog_1.svg ~ dog_5.svg / man_1.svg ~ man_5.svg)
+   * 여자는 귀여운 고양이(cat_1.svg ~ cat_5.svg / woman_1.svg ~ woman_5.svg)
+   */
+  public static getRandomProfileAvatar(gender: 'male' | 'female' | 'other'): string {
+    const randNum = Math.floor(Math.random() * 5) + 1; // 1 ~ 5
+    if (gender === 'female') {
+      return `/assets/profiles/woman_${randNum}.svg`;
+    }
+    return `/assets/profiles/man_${randNum}.svg`;
+  }
+
+  public static updatePopularityScore(userId: string, delta: number): UserProfile | null {
+    return this.updateUserPopularity(userId, delta);
+  }
+
   public static updateUserPopularity(userId: string, delta: number): UserProfile | null {
     const allUsers = this.getAllUsers();
     const target = allUsers.find((u) => u.id === userId);
@@ -625,6 +728,183 @@ export class DatingService {
     }
 
     return target;
+  }
+
+  /**
+   * Request Agency Membership Registration
+   * - Sets approvalStatus to 'pending' (Agency Admin must approve)
+   * - Automatically assigns random official avatar from /assets/profiles/
+   */
+  public static requestUserRegistration(params: {
+    email: string;
+    passwordPlain: string;
+    name: string;
+    gender: 'male' | 'female' | 'other';
+    birthDate: string;
+    age: number;
+    company: string;
+    bio: string;
+    interests: string[];
+    location?: UserLocation;
+  }): { success: boolean; user?: UserProfile; message: string } {
+    const cleanEmail = params.email.toLowerCase().trim();
+
+    // Check banned email
+    const BANNED_EMAILS_KEY = 'love_app_banned_emails';
+    const banned: string[] = JSON.parse(localStorage.getItem(BANNED_EMAILS_KEY) || '[]');
+    if (banned.includes(cleanEmail)) {
+      return {
+        success: false,
+        message: '해당 이메일은 운영정책 위반으로 영구 차단된 계정입니다. 가입이 불가능합니다.',
+      };
+    }
+
+    // Check domain whitelist
+    const domainCheck = this.isEmailDomainAllowed(cleanEmail);
+    if (!domainCheck.allowed) {
+      return {
+        success: false,
+        message: `지정된 공공기관/공기업/지자체 도메인(@${domainCheck.domain || '...'})의 이메일이 아닙니다. 허용된 기관 이메일로만 가입이 가능합니다.`,
+      };
+    }
+
+    const allUsers = this.getAllUsers();
+    const existing = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (existing) {
+      if (existing.approvalStatus === 'pending') {
+        return {
+          success: false,
+          message: '이미 소속 기관 관리자 승인 대기 중인 이메일입니다. 기관 담당자 승인을 기다려주세요.',
+        };
+      }
+      return {
+        success: false,
+        message: '이미 등록된 이메일 계정입니다. 로그인해주세요.',
+      };
+    }
+
+    // Auto assign official avatar from asset folder based on gender
+    const defaultAvatar = this.getRandomProfileAvatar(params.gender);
+
+    const newUser: UserProfile = {
+      id: `member_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      email: cleanEmail,
+      name: params.name.trim(),
+      gender: params.gender,
+      birthDate: params.birthDate,
+      age: params.age,
+      company: params.company.trim() || (domainCheck.matchedItem?.companyName || '공공기관'),
+      photoUrl: defaultAvatar,
+      bio: params.bio.trim(),
+      interests: params.interests,
+      location: params.location || {
+        latitude: this.DEFAULT_CENTER.latitude,
+        longitude: this.DEFAULT_CENTER.longitude,
+        lastUpdated: Date.now(),
+      },
+      isOnline: false,
+      verifiedEmail: false, // will be verified upon agency approval
+      createdAt: Date.now(),
+      lastActive: Date.now(),
+      popularity: 100,
+      approvalStatus: 'pending',
+      agencyDomain: domainCheck.domain,
+      isTestAccount: false,
+    };
+
+    // Save Password
+    this.saveUserPassword(cleanEmail, params.passwordPlain);
+
+    // Save user
+    allUsers.push(newUser);
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+
+    return {
+      success: true,
+      user: newUser,
+      message: `[${domainCheck.matchedItem?.companyName || '소속 기관'}] 가입 신청이 성공적으로 접수되었습니다. 기관 담당자 승인 완료 후 정상 로그인이 가능합니다.`,
+    };
+  }
+
+  /**
+   * User Login with Agency Approval Status Check
+   */
+  public static loginUserWithApprovalCheck(
+    email: string,
+    passwordPlain: string
+  ): {
+    success: boolean;
+    user?: UserProfile;
+    isPendingApproval?: boolean;
+    isRejected?: boolean;
+    message?: string;
+  } {
+    const cleanEmail = email.toLowerCase().trim();
+
+    // Check banned email
+    const BANNED_EMAILS_KEY = 'love_app_banned_emails';
+    const banned: string[] = JSON.parse(localStorage.getItem(BANNED_EMAILS_KEY) || '[]');
+    if (banned.includes(cleanEmail)) {
+      return {
+        success: false,
+        message: '해당 계정은 운영정책 위반으로 영구 이용정지된 상태입니다. 접속할 수 없습니다.',
+      };
+    }
+
+    const allUsers = this.getAllUsers();
+    const user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+
+    if (!user) {
+      return {
+        success: false,
+        message: '가입되지 않은 이메일 계정입니다. 회원가입 신청을 먼저 진행해주세요.',
+      };
+    }
+
+    // Verify Password
+    if (!this.verifyUserPassword(cleanEmail, passwordPlain)) {
+      return {
+        success: false,
+        message: '비밀번호가 일치하지 않습니다.',
+      };
+    }
+
+    // Check Approval Status
+    if (user.approvalStatus === 'pending') {
+      return {
+        success: false,
+        isPendingApproval: true,
+        message: '소속 기관 담당자의 가입 승인 대기 중입니다. 기관 관리자가 승인한 이후 로그인하실 수 있습니다.',
+      };
+    }
+
+    if (user.approvalStatus === 'rejected') {
+      return {
+        success: false,
+        isRejected: true,
+        message: `가입 요청이 반려되었습니다. (사유: ${user.rejectionReason || '소속 기관 확인 불가'})`,
+      };
+    }
+
+    // Check Sanctions
+    const now = Date.now();
+    if (user.isBanned) {
+      return {
+        success: false,
+        message: '운영정책 위반으로 영구 차단된 계정입니다.',
+      };
+    }
+
+    // Save as Current User
+    user.isOnline = true;
+    user.lastActive = now;
+    this.saveCurrentUser(user);
+
+    return {
+      success: true,
+      user,
+      message: '로그인되었습니다.',
+    };
   }
 
   /**

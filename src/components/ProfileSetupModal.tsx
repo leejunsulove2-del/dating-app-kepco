@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { Camera, Building2, Calendar, User, Heart, Sparkles, Check, Plus, AlertCircle } from 'lucide-react';
+import { Camera, Building2, Calendar, User, Heart, Sparkles, Check, Plus, AlertCircle, CheckCircle2, ShieldAlert } from 'lucide-react';
 import { UserProfile } from '../types';
 import { calculateAge } from '../utils/geo';
 import { INITIAL_INTEREST_TAGS } from '../services/mockProfiles';
 import { DatingService } from '../services/datingService';
+import { AdminService } from '../services/adminService';
+import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
+import { BirthDatePicker } from './BirthDatePicker';
 
 interface ProfileSetupModalProps {
   isOpen: boolean;
@@ -11,13 +14,20 @@ interface ProfileSetupModalProps {
   onComplete: (completedUser: UserProfile) => void;
 }
 
-const PRESET_AVATARS = [
-  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=500&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=500&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?w=500&auto=format&fit=crop&q=80',
+const OFFICIAL_MALE_AVATARS = [
+  '/assets/profiles/man_1.svg',
+  '/assets/profiles/man_2.svg',
+  '/assets/profiles/man_3.svg',
+  '/assets/profiles/man_4.svg',
+  '/assets/profiles/man_5.svg',
+];
+
+const OFFICIAL_FEMALE_AVATARS = [
+  '/assets/profiles/woman_1.svg',
+  '/assets/profiles/woman_2.svg',
+  '/assets/profiles/woman_3.svg',
+  '/assets/profiles/woman_4.svg',
+  '/assets/profiles/woman_5.svg',
 ];
 
 export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
@@ -29,13 +39,17 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   const [gender, setGender] = useState<'male' | 'female' | 'other'>(initialUser.gender || 'female');
   const [birthDate, setBirthDate] = useState(initialUser.birthDate || '1998-05-20');
   const [company, setCompany] = useState(initialUser.company || '');
-  const [photoUrl, setPhotoUrl] = useState(initialUser.photoUrl || PRESET_AVATARS[0]);
+  const [photoUrl, setPhotoUrl] = useState(
+    initialUser.photoUrl || (gender === 'female' ? OFFICIAL_FEMALE_AVATARS[0] : OFFICIAL_MALE_AVATARS[0])
+  );
   const [bio, setBio] = useState(initialUser.bio || '');
   const [interests, setInterests] = useState<string[]>(initialUser.interests || ['☕ 카페투어', '🍷 와인/위스키']);
   const [customInterest, setCustomInterest] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  const currentAvatarList = gender === 'female' ? OFFICIAL_FEMALE_AVATARS : OFFICIAL_MALE_AVATARS;
 
   const handleInterestToggle = (tag: string) => {
     if (interests.includes(tag)) {
@@ -61,22 +75,14 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
     setCustomInterest('');
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoUrl(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
+  // Direct photo upload block with user notice requirement
+  const handleDirectUploadAttempt = () => {
+    alert('임시로 직접 프로필사진등록 기능을 정지했습니다.');
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Mandatory validation check as specified in requirements:
-    // "기본적으로 프로필사진, 생년월일, 기업명을 기록해야만 하며, 자기소개와 관심사 항목을 추가하여 프로필의 완성도를 높일 수 있도록 해주세요."
     if (!photoUrl) {
       setError('프로필 사진은 필수 항목입니다.');
       return;
@@ -114,13 +120,14 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
     };
 
     DatingService.saveCurrentUser(updatedUser);
+    AdminService.recordBioChange(updatedUser.id, updatedUser, 'user');
+
     onComplete(updatedUser);
   };
 
   return (
     <div id="profile-setup-backdrop" className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/75 backdrop-blur-sm overflow-y-auto">
       <div id="profile-setup-container" className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-stone-100 overflow-hidden my-6 animate-in fade-in zoom-in-95 duration-200">
-        
         {/* Header */}
         <div className="bg-gradient-to-r from-rose-500 to-pink-500 p-6 text-white text-center">
           <span className="inline-block px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-semibold uppercase tracking-wider mb-2">
@@ -128,7 +135,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
           </span>
           <h2 className="text-2xl font-bold">프로필 완성하기</h2>
           <p className="text-rose-100 text-xs mt-1">
-            사진, 생년월일, 기업명을 등록하고 인근의 멋진 인연을 만나보세요
+            공식 아바타, 생년월일, 소속을 등록하고 인근의 멋진 인연을 만나보세요
           </p>
         </div>
 
@@ -140,43 +147,57 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
             </div>
           )}
 
-          {/* Mandatory: Profile Photo */}
+          {/* Official Avatar Selection */}
           <div className="space-y-3">
-            <label className="block text-xs font-bold text-stone-800">
-              프로필 사진 <span className="text-rose-500">* 필수</span>
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="block text-xs font-bold text-stone-800">
+                공식 프로필 캐릭터 <span className="text-rose-500">* 필수</span>
+              </label>
+              <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1">
+                <ShieldAlert className="w-3 h-3 text-amber-600" />
+                사칭 방지 공식 캐릭터 적용
+              </span>
+            </div>
+
             <div className="flex flex-col sm:flex-row items-center gap-4">
-              <div className="relative group shrink-0">
+              <div className="relative shrink-0">
                 <img
-                  src={photoUrl}
+                  src={photoUrl || getAvatarForUser(gender, initialUser.id)}
                   alt="Profile Preview"
-                  className="w-24 h-24 rounded-2xl object-cover border-2 border-rose-200 shadow-md"
+                  onError={(e) => handleAvatarError(e, gender, initialUser.id)}
+                  className="w-24 h-24 rounded-2xl object-cover border-2 border-rose-300 shadow-md bg-stone-100"
                 />
-                <label className="absolute inset-0 bg-black/40 rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition cursor-pointer text-white text-xs">
-                  <Camera className="w-5 h-5 mr-1" /> 변경
-                  <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-                </label>
               </div>
-              <div className="w-full space-y-1.5">
-                <p className="text-xs text-stone-500 font-medium">추천 아바타 또는 사진 업로드</p>
+              <div className="w-full space-y-2">
+                <p className="text-xs text-stone-600 font-medium">원하시는 공식 캐릭터 아바타를 선택하세요:</p>
                 <div className="flex flex-wrap gap-2">
-                  {PRESET_AVATARS.map((url, i) => (
+                  {currentAvatarList.map((url, i) => (
                     <button
                       key={i}
                       type="button"
                       onClick={() => setPhotoUrl(url)}
-                      className={`w-9 h-9 rounded-xl overflow-hidden border-2 transition ${
-                        photoUrl === url ? 'border-rose-500 scale-105 ring-2 ring-rose-200' : 'border-stone-200 hover:border-stone-400'
+                      className={`w-10 h-10 rounded-xl overflow-hidden border-2 transition ${
+                        photoUrl === url ? 'border-rose-500 scale-105 ring-2 ring-rose-200' : 'border-stone-200 hover:border-stone-400 bg-stone-50'
                       }`}
                     >
-                      <img src={url} alt="preset" className="w-full h-full object-cover" />
+                      <img 
+                        src={url} 
+                        alt={`avatar-${i}`} 
+                        onError={(e) => handleAvatarError(e, gender, `opt_${i}`)}
+                        className="w-full h-full object-cover" 
+                      />
                     </button>
                   ))}
-                  <label className="h-9 px-2.5 rounded-xl border border-dashed border-stone-300 hover:border-rose-400 bg-stone-50 flex items-center justify-center text-stone-600 text-xs cursor-pointer transition">
-                    <Camera className="w-3.5 h-3.5 mr-1 text-rose-500" />
-                    직접 등록
-                    <input type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
-                  </label>
+
+                  {/* Direct Photo Registration Button */}
+                  <button
+                    type="button"
+                    onClick={handleDirectUploadAttempt}
+                    className="h-10 px-3 rounded-xl border border-dashed border-stone-300 hover:border-stone-400 bg-stone-50 flex items-center justify-center text-stone-500 text-xs transition"
+                  >
+                    <Camera className="w-3.5 h-3.5 mr-1 text-stone-400" />
+                    직접 사진등록
+                  </button>
                 </div>
               </div>
             </div>
@@ -197,34 +218,34 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   placeholder="예: 김민지"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white"
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-stone-800 mb-1">
-                성별 <span className="text-rose-500">*</span>
-              </label>
+              <label className="block text-xs font-bold text-stone-800 mb-1">성별</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setGender('female')}
-                  className={`py-2.5 text-xs font-semibold rounded-xl border transition ${
-                    gender === 'female'
-                      ? 'bg-rose-50 border-rose-400 text-rose-600 ring-2 ring-rose-200'
-                      : 'bg-stone-50 border-stone-200 text-stone-600'
+                  onClick={() => {
+                    setGender('female');
+                    setPhotoUrl(OFFICIAL_FEMALE_AVATARS[0]);
+                  }}
+                  className={`py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                    gender === 'female' ? 'bg-rose-500 text-white shadow-sm' : 'bg-stone-50 border border-stone-200 text-stone-600'
                   }`}
                 >
                   여성
                 </button>
                 <button
                   type="button"
-                  onClick={() => setGender('male')}
-                  className={`py-2.5 text-xs font-semibold rounded-xl border transition ${
-                    gender === 'male'
-                      ? 'bg-blue-50 border-blue-400 text-blue-600 ring-2 ring-blue-200'
-                      : 'bg-stone-50 border-stone-200 text-stone-600'
+                  onClick={() => {
+                    setGender('male');
+                    setPhotoUrl(OFFICIAL_MALE_AVATARS[0]);
+                  }}
+                  className={`py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
+                    gender === 'male' ? 'bg-blue-500 text-white shadow-sm' : 'bg-stone-50 border border-stone-200 text-stone-600'
                   }`}
                 >
                   남성
@@ -233,32 +254,22 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
             </div>
           </div>
 
-          {/* Mandatory: Date of Birth */}
+          {/* Birth Date & Company */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-bold text-stone-800 mb-1">
-                생년월일 <span className="text-rose-500">* 필수</span>
+                생년월일 (연도 / 월 / 일) <span className="text-rose-500">* 필수</span>
               </label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
-                <input
-                  id="profile-birthdate-input"
-                  type="date"
-                  required
-                  value={birthDate}
-                  onChange={(e) => setBirthDate(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white font-sans"
-                />
-              </div>
-              <p className="text-[11px] text-stone-400 mt-1">
-                현재 만 <span className="font-bold text-stone-700">{calculateAge(birthDate)}세</span>로 표시됩니다
-              </p>
+              <BirthDatePicker
+                value={birthDate}
+                onChange={(val) => setBirthDate(val)}
+                theme="light"
+              />
             </div>
 
-            {/* Mandatory: Company Name */}
             <div>
               <label className="block text-xs font-bold text-stone-800 mb-1">
-                기업명 / 직장명 <span className="text-rose-500">* 필수</span>
+                기업명 / 소속 <span className="text-rose-500">* 필수</span>
               </label>
               <div className="relative">
                 <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
@@ -266,42 +277,36 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   id="profile-company-input"
                   type="text"
                   required
-                  placeholder="예: 카카오, 네이버, 스타트업"
+                  placeholder="예: 한국전력공사"
                   value={company}
                   onChange={(e) => setCompany(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white"
+                  className="w-full pl-9 pr-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
                 />
               </div>
-              <p className="text-[11px] text-stone-400 mt-1">
-                신뢰도 높은 매칭을 위해 필수 입력입니다
-              </p>
             </div>
           </div>
 
-          {/* Self-Introduction (자기소개) */}
+          {/* Bio */}
           <div>
-            <label className="block text-xs font-bold text-stone-800 mb-1">
-              자기소개 <span className="text-stone-400 text-[11px] font-normal">(프로필 매칭률 상승)</span>
-            </label>
+            <label className="block text-xs font-bold text-stone-800 mb-1">한 줄 소개</label>
             <textarea
               id="profile-bio-input"
-              rows={3}
-              placeholder="자신의 성향, 취향, 주말에 즐겨하는 일 등을 자유롭게 작성해주세요."
+              rows={2}
+              placeholder="자신을 표현하는 매력적인 소개글을 남겨보세요."
               value={bio}
               onChange={(e) => setBio(e.target.value)}
-              className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white resize-none"
+              className="w-full p-3 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 resize-none"
             />
           </div>
 
-          {/* Interests (관심사 항목) */}
+          {/* Interests */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-bold text-stone-800">
-                관심사 선택 <span className="text-stone-400 text-[11px] font-normal">({interests.length}/8개 선택)</span>
-              </label>
+              <label className="block text-xs font-bold text-stone-800">관심사 키워드 (최대 8개)</label>
+              <span className="text-[11px] text-stone-500">{interests.length}/8 선택됨</span>
             </div>
-            
-            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-2 bg-stone-50 rounded-xl border border-stone-200">
+
+            <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto p-1">
               {INITIAL_INTEREST_TAGS.map((tag) => {
                 const isSelected = interests.includes(tag);
                 return (
@@ -309,10 +314,10 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                     key={tag}
                     type="button"
                     onClick={() => handleInterestToggle(tag)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition cursor-pointer flex items-center gap-1 ${
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition flex items-center gap-1 ${
                       isSelected
                         ? 'bg-rose-500 text-white shadow-sm'
-                        : 'bg-white text-stone-700 hover:bg-stone-200 border border-stone-200'
+                        : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
                     }`}
                   >
                     {isSelected && <Check className="w-3 h-3" />}
@@ -322,11 +327,11 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
               })}
             </div>
 
-            {/* Add Custom Tag */}
+            {/* Custom Tag Input */}
             <div className="flex gap-2 pt-1">
               <input
                 type="text"
-                placeholder="새 관심사 직접 입력 (예: 보드게임, 베이커리)"
+                placeholder="직접 관심사 추가 (예: 클라이밍)"
                 value={customInterest}
                 onChange={(e) => setCustomInterest(e.target.value)}
                 onKeyDown={(e) => {
@@ -335,25 +340,26 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                     handleAddCustomInterest();
                   }
                 }}
-                className="flex-1 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-rose-500"
+                className="flex-1 px-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:border-rose-500"
               />
               <button
                 type="button"
                 onClick={handleAddCustomInterest}
-                className="px-3 py-1.5 bg-stone-800 hover:bg-stone-900 text-white rounded-xl text-xs font-medium flex items-center gap-1"
+                className="px-3 py-1.5 bg-stone-800 text-white rounded-xl text-xs font-semibold hover:bg-stone-700 transition flex items-center gap-1"
               >
-                <Plus className="w-3.5 h-3.5" /> 추가
+                <Plus className="w-3.5 h-3.5" />
+                추가
               </button>
             </div>
           </div>
 
           <button
-            id="profile-complete-btn"
+            id="profile-setup-submit-btn"
             type="submit"
-            className="w-full py-3.5 bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 text-white font-bold rounded-xl text-sm transition shadow-lg shadow-rose-200 flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full py-3.5 bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 text-white font-bold text-sm rounded-2xl shadow-lg shadow-rose-200 transition duration-200 flex items-center justify-center gap-2 cursor-pointer"
           >
             <Sparkles className="w-4 h-4" />
-            <span>프로필 저장하고 주변 이성 찾기</span>
+            <span>프로필 저장하고 시작하기</span>
           </button>
         </form>
       </div>

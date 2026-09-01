@@ -1,0 +1,2177 @@
+import React, { useState, useEffect } from 'react';
+import {
+  ShieldAlert,
+  Users,
+  UserCheck,
+  UserX,
+  AlertTriangle,
+  FileText,
+  Clock,
+  Gift,
+  CheckCircle2,
+  Trash2,
+  Plus,
+  Search,
+  MessageSquare,
+  History,
+  Database,
+  LogOut,
+  RefreshCw,
+  Eye,
+  Check,
+  X,
+  Sparkles,
+  Lock,
+  Building2,
+  Sliders,
+  ChevronRight,
+  Send,
+  Radio,
+  Pin,
+  MessageCircle,
+  Award,
+  Layers,
+  ArrowRightLeft,
+  Calendar,
+  Zap,
+  Unlock,
+  CalendarDays,
+  ShieldCheck,
+  UserCog,
+} from 'lucide-react';
+import {
+  AdminAccount,
+  UserReport,
+  UserProfile,
+  BioHistoryItem,
+  ChatMessage,
+  ReportReason,
+  AdminBoardPost,
+  AdminBoardComment,
+  GiftDeliveryLog,
+} from '../types';
+import { AdminService, MASTER_ADMIN_CREDENTIALS, DEFAULT_AGENCY_ADMINS } from '../services/adminService';
+import { DatingService, DEFAULT_ALLOWED_DOMAINS } from '../services/datingService';
+import { FirebaseChatService } from '../services/firebaseChatService';
+import { ItemService } from '../services/itemService';
+import { calculateAge, formatDistance, getUserActiveStatus } from '../utils/geo';
+import { getAvatarForUser, handleAvatarError } from '../utils/avatarUtils';
+
+interface AdminDashboardProps {
+  currentAdmin: AdminAccount;
+  onLogout: () => void;
+}
+
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({
+  currentAdmin,
+  onLogout,
+}) => {
+  // Navigation tabs
+  type TabType = 'approvals' | 'agency_users' | 'agency_admins' | 'admin_board' | 'reports' | 'stats';
+  const [activeTab, setActiveTab] = useState<TabType>('approvals');
+
+  // Core Data States
+  const [adminProfile, setAdminProfile] = useState<AdminAccount>(currentAdmin);
+  const [stats, setStats] = useState(() => AdminService.getPlatformStatistics());
+  const [pendingUsers, setPendingUsers] = useState<UserProfile[]>(() =>
+    AdminService.getPendingApprovals(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain)
+  );
+  const [agencyUsers, setAgencyUsers] = useState<UserProfile[]>(() =>
+    AdminService.getAgencyUsers(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain)
+  );
+  const [allAdmins, setAllAdmins] = useState<AdminAccount[]>(() => AdminService.getAllAdminAccounts());
+  const [reports, setReports] = useState<UserReport[]>(() => AdminService.getAllReports());
+  const [boardPosts, setBoardPosts] = useState<AdminBoardPost[]>(() => AdminService.getBoardPosts());
+  const [giftLogs, setGiftLogs] = useState<GiftDeliveryLog[]>(() =>
+    AdminService.getGiftDeliveryLogs(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain)
+  );
+
+  // Search & Filter States
+  const [userSearchTerm, setUserSearchTerm] = useState('');
+  const [selectedUserDetail, setSelectedUserDetail] = useState<UserProfile | null>(null);
+  const [selectedReport, setSelectedReport] = useState<UserReport | null>(null);
+  const [boardCategoryFilter, setBoardCategoryFilter] = useState<'all' | 'notice' | 'request' | 'policy' | 'free'>('all');
+
+  // Feedback Notification Toast
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  // Re-sync Data
+  const refreshAllData = () => {
+    const freshAdmins = AdminService.getAllAdminAccounts();
+    setAllAdmins(freshAdmins);
+
+    const freshCurrent = freshAdmins.find((a) => a.id === currentAdmin.id) || (currentAdmin.isMaster ? MASTER_ADMIN_CREDENTIALS : currentAdmin);
+    setAdminProfile(freshCurrent);
+
+    setStats(AdminService.getPlatformStatistics());
+    setPendingUsers(AdminService.getPendingApprovals(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain));
+    setAgencyUsers(AdminService.getAgencyUsers(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain));
+    setReports(AdminService.getAllReports());
+    setBoardPosts(AdminService.getBoardPosts());
+    setGiftLogs(AdminService.getGiftDeliveryLogs(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain));
+  };
+
+  // ==========================================
+  // TAB 1: MEMBERSHIP APPROVAL ACTIONS
+  // ==========================================
+  const handleApproveUser = (userId: string) => {
+    const res = AdminService.approveUserRegistration(userId, adminProfile.email, adminProfile.name);
+    if (res.success) {
+      showToast(res.message, 'success');
+      refreshAllData();
+      if (selectedUserDetail?.id === userId) setSelectedUserDetail(null);
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleRejectUser = (userId: string) => {
+    const reason = window.prompt('가입 반려 사유를 입력해주세요:', '소속 기관 임직원 확인 불가');
+    if (reason === null) return;
+
+    const res = AdminService.rejectUserRegistration(userId, adminProfile.email, reason);
+    if (res.success) {
+      showToast(res.message, 'info');
+      refreshAllData();
+      if (selectedUserDetail?.id === userId) setSelectedUserDetail(null);
+    }
+  };
+
+  // ==========================================
+  // TAB 2: MEMBER MANAGEMENT (회원관리 & 제재/해지 & 선물 & 이벤트)
+  // ==========================================
+  const [memberFilter, setMemberFilter] = useState<'all' | 'regular' | 'admin' | 'sanctioned' | 'online'>('all');
+  const [memberSort, setMemberSort] = useState<'recent_active' | 'attendance_days' | 'created_at' | 'popularity' | 'sanction'>('recent_active');
+  const [eventBoxCost, setEventBoxCost] = useState(1);
+
+  // Direct Gift Modal
+  const [directGiftUser, setDirectGiftUser] = useState<UserProfile | null>(null);
+  const [directGiftType, setDirectGiftType] = useState<'welcome_box' | 'boost_antenna' | 'message_ticket' | 'popularity_50'>('welcome_box');
+  const [directGiftCount, setDirectGiftCount] = useState(1);
+  const [directGiftMemo, setDirectGiftMemo] = useState('');
+
+  // Direct Sanction Modal
+  const [sanctionTargetUser, setSanctionTargetUser] = useState<UserProfile | null>(null);
+  const [sanctionType, setSanctionType] = useState<'warning_1h' | 'restrict_24h' | 'restrict_7d' | 'permanent_ban'>('warning_1h');
+  const [sanctionReasonType, setSanctionReasonType] = useState<string>('부적절한 대화 및 비매너 언행');
+  const [sanctionCustomReason, setSanctionCustomReason] = useState<string>('');
+
+  // Direct Lift Sanction Modal
+  const [liftTargetUser, setLiftTargetUser] = useState<UserProfile | null>(null);
+  const [liftReason, setLiftReason] = useState<string>('소명 확인 완료 및 오해 해소');
+  const [liftCompensationBoxes, setLiftCompensationBoxes] = useState<number>(1);
+  const [liftNoticeMessage, setLiftNoticeMessage] = useState<string>('');
+
+  const oneHourAgo = Date.now() - 60 * 60 * 1000;
+  const recent1HourUsers = agencyUsers.filter((u) => {
+    if (u.approvalStatus === 'rejected' || u.approvalStatus === 'pending') return false;
+    return (u.lastActive && u.lastActive >= oneHourAgo) || u.isOnline;
+  });
+
+  const handleOpenSanctionModal = (user: UserProfile) => {
+    const protection = AdminService.isProtectedAdmin(user);
+    if (protection.isProtected) {
+      showToast(`[설정 불가] ${protection.label} 계정은 관리자 보호 대상이므로 제재를 적용할 수 없습니다.`, 'error');
+      return;
+    }
+    setSanctionTargetUser(user);
+    setSanctionType('warning_1h');
+    setSanctionReasonType('부적절한 대화 및 비매너 언행');
+    setSanctionCustomReason('');
+  };
+
+  const handleExecuteDirectSanction = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sanctionTargetUser) return;
+
+    const res = AdminService.directSanctionUser(
+      adminProfile,
+      sanctionTargetUser.id,
+      sanctionType,
+      sanctionReasonType,
+      sanctionCustomReason.trim() || undefined
+    );
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setSanctionTargetUser(null);
+      refreshAllData();
+      if (selectedUserDetail?.id === sanctionTargetUser.id) {
+        setSelectedUserDetail(res.user || null);
+      }
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleOpenLiftModal = (user: UserProfile) => {
+    const protection = AdminService.isProtectedAdmin(user);
+    if (protection.isProtected) {
+      showToast(`[설정 불가] ${protection.label} 계정은 관리자 보호 대상입니다.`, 'error');
+      return;
+    }
+    setLiftTargetUser(user);
+    setLiftReason('소명 확인 완료 및 오해 해소');
+    setLiftCompensationBoxes(1);
+    setLiftNoticeMessage('');
+  };
+
+  const handleExecuteDirectLiftSanction = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!liftTargetUser) return;
+
+    const res = AdminService.directLiftSanctionUser(
+      adminProfile,
+      liftTargetUser.id,
+      liftReason,
+      liftCompensationBoxes,
+      liftNoticeMessage.trim() || undefined
+    );
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setLiftTargetUser(null);
+      refreshAllData();
+      if (selectedUserDetail?.id === liftTargetUser.id) {
+        setSelectedUserDetail(res.user || null);
+      }
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleOpenGiftModal = (user: UserProfile) => {
+    const protection = AdminService.isProtectedAdmin(user);
+    if (protection.isProtected) {
+      showToast(`[설정 불가] ${protection.label} 계정은 관리자 보호 계정이므로 선물 지급 대상이 아닙니다.`, 'error');
+      return;
+    }
+    setDirectGiftUser(user);
+    setDirectGiftType('welcome_box');
+    setDirectGiftCount(1);
+    setDirectGiftMemo('');
+  };
+
+  const handleRun1HourEvent = () => {
+    if (recent1HourUsers.length === 0) {
+      showToast('최근 1시간 이내에 활동/접속한 기관 회원이 없습니다.', 'error');
+      return;
+    }
+
+    const neededBoxes = recent1HourUsers.length * eventBoxCost;
+    if (!adminProfile.isMaster && (adminProfile.eventBoxesRemaining || 0) < neededBoxes) {
+      showToast(
+        `보유한 이벤트 상자가 부족합니다. (필요: ${neededBoxes}개, 보유: ${adminProfile.eventBoxesRemaining}개). 최고관리자에게 추가 지급을 요청하세요.`,
+        'error'
+      );
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `[${adminProfile.agencyName}] 최근 1시간 접속자 ${recent1HourUsers.length}명 전원에게 랜덤 보상을 지급하시겠습니까?\n(총 ${neededBoxes}개 이벤트 상자 소모)`
+      )
+    ) {
+      return;
+    }
+
+    const res = AdminService.run1HourRecentUsersRandomEvent(adminProfile, eventBoxCost);
+    if (res.success) {
+      showToast(res.message, 'success');
+      refreshAllData();
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleSendDirectGift = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directGiftUser) return;
+
+    const res = AdminService.sendDirectGiftToUser(
+      adminProfile,
+      directGiftUser.id,
+      directGiftType,
+      directGiftCount,
+      directGiftMemo.trim() || undefined
+    );
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setDirectGiftUser(null);
+      setDirectGiftMemo('');
+      refreshAllData();
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  // ==========================================
+  // TAB 3: MASTER ONLY - AGENCY ADMINS & GRANT BOXES
+  // ==========================================
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminPassword, setNewAdminPassword] = useState('1234');
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminDept, setNewAdminDept] = useState('');
+  const [newAdminAgencyDomain, setNewAdminAgencyDomain] = useState('kepco.co.kr');
+  const [newAdminAgencyName, setNewAdminAgencyName] = useState('한국전력공사');
+  const [newAdminInitialBoxes, setNewAdminInitialBoxes] = useState(1000);
+
+  // Grant Boxes Modal Form
+  const [grantTargetAdmin, setGrantTargetAdmin] = useState<AdminAccount | null>(null);
+  const [grantBoxesAmount, setGrantBoxesAmount] = useState(500);
+  const [grantMemo, setGrantMemo] = useState('월간 이벤트 예산 추가 배정');
+
+  const handleCreateAgencyAdmin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminEmail.trim() || !newAdminPassword.trim() || !newAdminName.trim()) {
+      showToast('이메일, 비밀번호, 담당자 이름은 필수입니다.', 'error');
+      return;
+    }
+
+    const res = AdminService.createAgencyAdmin(
+      newAdminEmail.trim(),
+      newAdminPassword.trim(),
+      newAdminName.trim(),
+      newAdminDept.trim(),
+      newAdminAgencyDomain.trim(),
+      newAdminAgencyName.trim(),
+      adminProfile.email,
+      newAdminInitialBoxes
+    );
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setNewAdminEmail('');
+      setNewAdminName('');
+      setNewAdminDept('');
+      refreshAllData();
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleExecuteGrantBoxes = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!grantTargetAdmin) return;
+
+    const res = AdminService.grantEventBoxesToAgencyAdmin(
+      grantTargetAdmin.id,
+      grantBoxesAmount,
+      adminProfile.email,
+      grantMemo
+    );
+
+    if (res.success) {
+      showToast(res.message, 'success');
+      setGrantTargetAdmin(null);
+      refreshAllData();
+    } else {
+      showToast(res.message, 'error');
+    }
+  };
+
+  const handleDeleteAgencyAdmin = (adminId: string) => {
+    if (window.confirm('해당 기관 관리자 계정을 삭제하시겠습니까?')) {
+      AdminService.deleteSubAdmin(adminId);
+      showToast('기관 관리자 계정이 삭제되었습니다.', 'info');
+      refreshAllData();
+    }
+  };
+
+  // ==========================================
+  // TAB 4: ADMIN BOARD (COMMUNICATION)
+  // ==========================================
+  const [isNewPostModalOpen, setIsNewPostModalOpen] = useState(false);
+  const [newPostCategory, setNewPostCategory] = useState<'notice' | 'request' | 'policy' | 'free'>('request');
+  const [newPostTitle, setNewPostTitle] = useState('');
+  const [newPostContent, setNewPostContent] = useState('');
+  const [newPostPinned, setNewPostPinned] = useState(false);
+  const [activePostComments, setActivePostComments] = useState<string | null>(null);
+  const [commentInput, setCommentInput] = useState('');
+
+  const handleCreateBoardPost = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPostTitle.trim() || !newPostContent.trim()) {
+      showToast('제목과 내용을 모두 입력해주세요.', 'error');
+      return;
+    }
+
+    AdminService.createBoardPost(adminProfile, newPostCategory, newPostTitle, newPostContent, newPostPinned);
+    showToast('게시글이 등록되었습니다.', 'success');
+    setNewPostTitle('');
+    setNewPostContent('');
+    setNewPostPinned(false);
+    setIsNewPostModalOpen(false);
+    refreshAllData();
+  };
+
+  const handleAddComment = (postId: string) => {
+    if (!commentInput.trim()) return;
+    AdminService.addBoardComment(postId, adminProfile, commentInput.trim());
+    setCommentInput('');
+    refreshAllData();
+  };
+
+  const handleDeletePost = (postId: string) => {
+    if (window.confirm('게시글을 삭제하시겠습니까?')) {
+      AdminService.deleteBoardPost(postId, adminProfile.email, adminProfile.isMaster);
+      showToast('게시글이 삭제되었습니다.', 'info');
+      refreshAllData();
+    }
+  };
+
+  // ==========================================
+  // TAB 5: REPORTS & SANCTIONS
+  // ==========================================
+  const [moderationAction, setModerationAction] = useState<'reduce_sanction' | 'false_report' | 'reward_reporter' | null>(null);
+  const [reduceRounds, setReduceRounds] = useState(1);
+  const [rewardBoxes, setRewardBoxes] = useState(2);
+  const [noticeMessage, setNoticeMessage] = useState('관리자 검토 결과 부적당한 제재로 확인되어 제재가 해제되고 환영박스가 지급되었습니다.');
+  const [adminActionNotes, setAdminActionNotes] = useState('');
+
+  const handleExecuteModeration = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedReport) return;
+
+    if (moderationAction === 'reduce_sanction') {
+      const res = AdminService.reduceSanctionAndCompensate(
+        selectedReport.id,
+        selectedReport.targetUserId,
+        reduceRounds,
+        rewardBoxes,
+        noticeMessage,
+        adminProfile.email
+      );
+      showToast(res.message, 'success');
+    } else if (moderationAction === 'false_report') {
+      const res = AdminService.markReportAsFalse(
+        selectedReport.id,
+        selectedReport.reporterId,
+        adminProfile.email,
+        adminActionNotes.trim() || undefined
+      );
+      showToast(res.message, 'info');
+    } else if (moderationAction === 'reward_reporter') {
+      const res = AdminService.rewardLegitimateReporter(
+        selectedReport.id,
+        selectedReport.reporterId,
+        rewardBoxes,
+        noticeMessage,
+        adminProfile.email
+      );
+      showToast(res.message, 'success');
+    }
+
+    setModerationAction(null);
+    setSelectedReport(null);
+    refreshAllData();
+  };
+
+  // ==========================================
+  // TAB 6: DB OPTIMIZE
+  // ==========================================
+  const handleManualDbOptimize = () => {
+    const res = FirebaseChatService.purgeExpiredAndOptimizeMessages();
+    showToast(`72시간 초과 만료 대화 ${res.purgedCount}건이 최적화 삭제되었습니다.`, 'success');
+    refreshAllData();
+  };
+
+  return (
+    <div className="flex flex-col h-screen w-screen bg-stone-900 text-stone-100 font-sans select-none overflow-hidden">
+      {/* Top Header Bar */}
+      <header className="h-16 bg-stone-950/90 border-b border-stone-800 px-6 flex items-center justify-between z-20 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-rose-600 to-amber-500 flex items-center justify-center shadow-lg shadow-rose-950/40">
+            <Building2 className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-bold text-white tracking-tight">
+                {adminProfile.isMaster ? '공공기관 매칭 시스템 통합 관리 포털' : `[${adminProfile.agencyName}] 기관 전용 관리 포털`}
+              </h1>
+              <span
+                className={`text-[11px] font-extrabold px-2 py-0.5 rounded-full ${
+                  adminProfile.isMaster ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                }`}
+              >
+                {adminProfile.isMaster ? '최고 관리자 (KEPCO)' : `기관 승인 관리자 (@${adminProfile.agencyDomain})`}
+              </span>
+            </div>
+            <p className="text-xs text-stone-400">
+              담당자: <span className="text-stone-200 font-medium">{adminProfile.name}</span> ({adminProfile.email})
+            </p>
+          </div>
+        </div>
+
+        {/* Action Widgets in Header */}
+        <div className="flex items-center gap-3">
+          {/* Monthly Event Boxes Balance Pill */}
+          <div className="hidden sm:flex items-center gap-2 bg-stone-800/90 border border-stone-700 px-3.5 py-1.5 rounded-xl shadow-inner">
+            <Gift className="w-4 h-4 text-amber-400" />
+            <div className="text-xs">
+              <span className="text-stone-400 mr-1.5">이벤트 상자 보유:</span>
+              <span className="font-extrabold text-amber-300 text-sm">
+                {adminProfile.isMaster ? '무제한 (최고관리자)' : `${adminProfile.eventBoxesRemaining?.toLocaleString() || 0}개`}
+              </span>
+              {!adminProfile.isMaster && <span className="text-[10px] text-stone-400 ml-1">(월 1,000개 기본)</span>}
+            </div>
+          </div>
+
+          <button
+            onClick={refreshAllData}
+            title="데이터 새로고침"
+            className="p-2 text-stone-400 hover:text-white bg-stone-800/80 hover:bg-stone-700 rounded-lg transition-colors border border-stone-700"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+
+          <button
+            onClick={onLogout}
+            className="flex items-center gap-2 px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>관리자 로그아웃</span>
+          </button>
+        </div>
+      </header>
+
+      {/* Main Layout Container */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Sidebar Navigation */}
+        <aside className="w-64 bg-stone-950/70 border-r border-stone-800/80 flex flex-col justify-between p-3 shrink-0">
+          <nav className="space-y-1">
+            {/* 1. Membership Approval */}
+            <button
+              onClick={() => setActiveTab('approvals')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-semibold transition-all ${
+                activeTab === 'approvals'
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50'
+                  : 'text-stone-300 hover:bg-stone-800/60 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <UserCheck className="w-4 h-4" />
+                <span>가입 요청 승인 심사</span>
+              </div>
+              {pendingUsers.length > 0 && (
+                <span className="bg-amber-400 text-stone-950 text-[11px] font-black px-2 py-0.5 rounded-full animate-pulse">
+                  {pendingUsers.length}
+                </span>
+              )}
+            </button>
+
+            {/* 2. Member Management */}
+            <button
+              onClick={() => setActiveTab('agency_users')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-semibold transition-all ${
+                activeTab === 'agency_users'
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50'
+                  : 'text-stone-300 hover:bg-stone-800/60 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Users className="w-4 h-4" />
+                <span>회원관리</span>
+              </div>
+              <span className="text-xs text-stone-400 font-mono">{agencyUsers.length}명</span>
+            </button>
+
+            {/* 3. Master Only: Agency Admins & Grant */}
+            {adminProfile.isMaster && (
+              <button
+                onClick={() => setActiveTab('agency_admins')}
+                className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-semibold transition-all ${
+                  activeTab === 'agency_admins'
+                    ? 'bg-amber-600 text-white shadow-lg shadow-amber-950/50'
+                    : 'text-amber-300/90 hover:bg-stone-800/60 hover:text-amber-200'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <Building2 className="w-4 h-4 text-amber-400" />
+                  <span>기관 관리자 & 상자 지급</span>
+                </div>
+                <span className="bg-amber-500/20 text-amber-300 text-[10px] font-bold px-1.5 py-0.5 rounded border border-amber-500/30">
+                  총괄
+                </span>
+              </button>
+            )}
+
+            {/* 4. Admin Communication Board */}
+            <button
+              onClick={() => setActiveTab('admin_board')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-semibold transition-all ${
+                activeTab === 'admin_board'
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50'
+                  : 'text-stone-300 hover:bg-stone-800/60 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <MessageSquare className="w-4 h-4" />
+                <span>관리자 소통 게시판</span>
+              </div>
+              <span className="text-xs text-stone-400 font-mono">{boardPosts.length}</span>
+            </button>
+
+            {/* 5. Reports & Sanctions */}
+            <button
+              onClick={() => setActiveTab('reports')}
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-sm font-semibold transition-all ${
+                activeTab === 'reports'
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50'
+                  : 'text-stone-300 hover:bg-stone-800/60 hover:text-white'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <ShieldAlert className="w-4 h-4" />
+                <span>제재 및 신고 관리</span>
+              </div>
+              {reports.filter((r) => r.status === 'pending').length > 0 && (
+                <span className="bg-rose-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-full">
+                  {reports.filter((r) => r.status === 'pending').length}
+                </span>
+              )}
+            </button>
+
+            {/* 6. Stats & DB */}
+            <button
+              onClick={() => setActiveTab('stats')}
+              className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-sm font-semibold transition-all ${
+                activeTab === 'stats'
+                  ? 'bg-rose-600 text-white shadow-lg shadow-rose-950/50'
+                  : 'text-stone-300 hover:bg-stone-800/60 hover:text-white'
+              }`}
+            >
+              <Database className="w-4 h-4" />
+              <span>시스템 통계 & DB 최적화</span>
+            </button>
+          </nav>
+
+          {/* Sidebar Footer Info */}
+          <div className="bg-stone-900/90 border border-stone-800 rounded-xl p-3 text-xs space-y-1.5">
+            <div className="flex items-center justify-between text-stone-400">
+              <span>기관 도메인</span>
+              <span className="font-mono text-stone-200">@{adminProfile.agencyDomain}</span>
+            </div>
+            <div className="flex items-center justify-between text-stone-400">
+              <span>활동 중 회원</span>
+              <span className="font-bold text-emerald-400">{stats.activeUsersNow}명</span>
+            </div>
+            <div className="flex items-center justify-between text-stone-400">
+              <span>가입 대기</span>
+              <span className="font-bold text-amber-400">{stats.pendingApprovalsCount}명</span>
+            </div>
+          </div>
+        </aside>
+
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-y-auto p-6 bg-stone-900/50">
+          {/* Toast Notice Bar */}
+          {toastMessage && (
+            <div
+              className={`mb-6 p-4 rounded-xl flex items-center justify-between text-sm font-semibold shadow-lg transition-all animate-fadeIn ${
+                toastMessage.type === 'success'
+                  ? 'bg-emerald-950/80 border border-emerald-500/40 text-emerald-200'
+                  : toastMessage.type === 'error'
+                  ? 'bg-rose-950/80 border border-rose-500/40 text-rose-200'
+                  : 'bg-stone-800 border border-stone-700 text-stone-200'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                <span>{toastMessage.text}</span>
+              </div>
+              <button onClick={() => setToastMessage(null)} className="p-1 hover:opacity-75">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 1: MEMBERSHIP APPROVAL MANAGEMENT */}
+          {/* ========================================================================= */}
+          {activeTab === 'approvals' && (
+            <div className="space-y-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                    <UserCheck className="w-5 h-5 text-rose-400" />
+                    <span>신규 회원 가입 요청 심사</span>
+                    <span className="text-sm font-normal text-stone-400">({pendingUsers.length}건 대기)</span>
+                  </h2>
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    공공기관 공식 메일 가입 신청자의 소속 및 프로필을 확인하고 승인합니다. 승인 즉시 정식 로그인과 함께 환영박스가 자동 지급됩니다.
+                  </p>
+                </div>
+              </div>
+
+              {pendingUsers.length === 0 ? (
+                <div className="bg-stone-950/60 border border-stone-800/80 rounded-2xl p-12 text-center space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-base font-bold text-stone-200">현재 대기 중인 가입 요청이 없습니다</h3>
+                  <p className="text-xs text-stone-400 max-w-md mx-auto">
+                    소속 기관 회원이 가입 신청서를 제출하면 이 목록에 실시간으로 등록됩니다.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {pendingUsers.map((user, idx) => (
+                    <div
+                      key={`pending-user-${user.id}-${idx}`}
+                      className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex flex-col justify-between hover:border-stone-700 transition-all shadow-md"
+                    >
+                      <div className="space-y-3">
+                        {/* Header Avatar & Basic Info */}
+                        <div className="flex items-center gap-3">
+                          <img
+                            src={user.photoUrl}
+                            alt={user.name}
+                            className="w-14 h-14 rounded-2xl object-cover border-2 border-stone-700 bg-stone-800"
+                          />
+                          <div className="overflow-hidden">
+                            <div className="flex items-center gap-2">
+                              <h4 className="text-sm font-bold text-white truncate">{user.name}</h4>
+                              <span
+                                className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                  user.gender === 'female' ? 'bg-rose-500/20 text-rose-300' : 'bg-blue-500/20 text-blue-300'
+                                }`}
+                              >
+                                {user.gender === 'female' ? '여' : '남'} / {user.age || calculateAge(user.birthDate)}세
+                              </span>
+                            </div>
+                            <p className="text-xs text-stone-400 font-mono truncate">{user.email}</p>
+                            <p className="text-xs font-semibold text-rose-300 truncate mt-0.5">{user.company}</p>
+                          </div>
+                        </div>
+
+                        {/* Bio & Details */}
+                        <div className="bg-stone-900/90 rounded-xl p-2.5 border border-stone-800 text-xs space-y-1.5">
+                          <p className="text-stone-300 line-clamp-2 italic">
+                            "{user.bio || '자기소개가 작성되지 않았습니다.'}"
+                          </p>
+                          {user.interests && user.interests.length > 0 && (
+                            <div className="flex flex-wrap gap-1 pt-1">
+                              {user.interests.map((tag, idx) => (
+                                <span key={idx} className="bg-stone-800 text-stone-300 text-[10px] px-2 py-0.5 rounded-md">
+                                  #{tag}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] text-stone-500 px-1">
+                          <span>신청일시: {new Date(user.createdAt).toLocaleString('ko-KR')}</span>
+                        </div>
+                      </div>
+
+                      {/* Approval Action Buttons */}
+                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-stone-800/80">
+                        <button
+                          onClick={() => handleRejectUser(user.id)}
+                          className="flex-1 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-stone-700"
+                        >
+                          <X className="w-3.5 h-3.5 text-rose-400" />
+                          <span>반려</span>
+                        </button>
+                        <button
+                          onClick={() => handleApproveUser(user.id)}
+                          className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-rose-950/40"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>가입 승인</span>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 2: MEMBER MANAGEMENT (회원관리 & 최종/누적접속일 & 제재/해지 & 선물) */}
+          {/* ========================================================================= */}
+          {activeTab === 'agency_users' && (
+            <div className="space-y-6">
+              {/* Top Statistics Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+                <div className="bg-stone-950/80 border border-stone-800/90 rounded-2xl p-4 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-stone-400">총 등록 회원</span>
+                    <Users className="w-4 h-4 text-rose-400" />
+                  </div>
+                  <div className="text-2xl font-black text-white mt-1.5 tracking-tight">
+                    {agencyUsers.length}<span className="text-sm font-normal text-stone-400 ml-1">명</span>
+                  </div>
+                  <div className="text-[11px] text-stone-400 mt-1">
+                    일반회원: {agencyUsers.filter((u) => !AdminService.isProtectedAdmin(u).isProtected).length}명
+                  </div>
+                </div>
+
+                <div className="bg-stone-950/80 border border-stone-800/90 rounded-2xl p-4 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-stone-400">실시간 접속자</span>
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  </div>
+                  <div className="text-2xl font-black text-emerald-400 mt-1.5 tracking-tight">
+                    {agencyUsers.filter((u) => u.isOnline || (u.lastActive && Date.now() - u.lastActive < 300000)).length}
+                    <span className="text-sm font-normal text-stone-400 ml-1">명</span>
+                  </div>
+                  <div className="text-[11px] text-emerald-500/80 mt-1">
+                    1시간 내 활동: {recent1HourUsers.length}명
+                  </div>
+                </div>
+
+                <div className="bg-stone-950/80 border border-stone-800/90 rounded-2xl p-4 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-stone-400">관리자 계정 (보호)</span>
+                    <ShieldCheck className="w-4 h-4 text-cyan-400" />
+                  </div>
+                  <div className="text-2xl font-black text-cyan-300 mt-1.5 tracking-tight">
+                    {agencyUsers.filter((u) => AdminService.isProtectedAdmin(u).isProtected).length}
+                    <span className="text-sm font-normal text-stone-400 ml-1">명</span>
+                  </div>
+                  <div className="text-[11px] text-stone-400 mt-1">
+                    제재/선물 설정 보호됨
+                  </div>
+                </div>
+
+                <div className="bg-stone-950/80 border border-stone-800/90 rounded-2xl p-4 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-stone-400">제재/이용제한 회원</span>
+                    <AlertTriangle className="w-4 h-4 text-amber-400" />
+                  </div>
+                  <div className="text-2xl font-black text-rose-400 mt-1.5 tracking-tight">
+                    {
+                      agencyUsers.filter(
+                        (u) =>
+                          (u.sanctionCount && u.sanctionCount > 0) ||
+                          u.isBanned ||
+                          (u.sanctionExpiresAt && u.sanctionExpiresAt > Date.now())
+                      ).length
+                    }
+                    <span className="text-sm font-normal text-stone-400 ml-1">명</span>
+                  </div>
+                  <div className="text-[11px] text-rose-400/80 mt-1">
+                    즉시 소명/해지 가능
+                  </div>
+                </div>
+              </div>
+
+              {/* Event Execution Banner Card */}
+              <div className="bg-gradient-to-r from-rose-950/80 via-stone-900 to-amber-950/60 border border-rose-500/30 rounded-2xl p-5 sm:p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute right-0 top-0 translate-x-8 -translate-y-8 w-48 h-48 bg-rose-500/10 rounded-full blur-2xl pointer-events-none" />
+
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative z-10">
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="bg-amber-400 text-stone-950 text-xs font-black px-2.5 py-0.5 rounded-full flex items-center gap-1">
+                        <Zap className="w-3.5 h-3.5 fill-stone-950" />
+                        기관 한정 서프라이즈 이벤트
+                      </span>
+                      <span className="text-xs text-stone-400 font-mono">
+                        보유 상자: <strong className="text-amber-300 font-bold">{adminProfile.isMaster ? '무제한' : `${adminProfile.eventBoxesRemaining?.toLocaleString()}개`}</strong>
+                      </span>
+                    </div>
+                    <h3 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                      최근 1시간 이내 접속 회원 대상 랜덤 보상 지급
+                    </h3>
+                    <p className="text-xs text-stone-300 max-w-2xl leading-relaxed">
+                      현재 접속 중이거나 1시간 내 활동한 소속 기관 일반회원들에게 감사 선물(환영박스, 광역안테나, 호감도 +30 등)을 일괄 무작위 발송합니다.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="bg-stone-950/80 border border-stone-800 rounded-xl p-3 text-center min-w-[100px]">
+                      <span className="text-[10px] text-stone-400 block">대상 사원</span>
+                      <span className="text-lg font-black text-emerald-400">{recent1HourUsers.length}명</span>
+                    </div>
+
+                    <button
+                      onClick={handleRun1HourEvent}
+                      disabled={recent1HourUsers.length === 0}
+                      className={`px-4 py-3 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all shadow-lg ${
+                        recent1HourUsers.length > 0
+                          ? 'bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white shadow-rose-950/60'
+                          : 'bg-stone-800 text-stone-500 cursor-not-allowed'
+                      }`}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      <span>랜덤 선물 발송 ({recent1HourUsers.length * eventBoxCost}개 상자)</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Toolbar: Search, Filters, and Sorters */}
+              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 space-y-3.5 shadow-md">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                  {/* Left: Filter Pills */}
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      onClick={() => setMemberFilter('all')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                        memberFilter === 'all'
+                          ? 'bg-rose-600 text-white shadow'
+                          : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+                      }`}
+                    >
+                      전체 ({agencyUsers.length})
+                    </button>
+                    <button
+                      onClick={() => setMemberFilter('regular')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                        memberFilter === 'regular'
+                          ? 'bg-rose-600 text-white shadow'
+                          : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+                      }`}
+                    >
+                      일반회원 ({agencyUsers.filter((u) => !AdminService.isProtectedAdmin(u).isProtected).length})
+                    </button>
+                    <button
+                      onClick={() => setMemberFilter('admin')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                        memberFilter === 'admin'
+                          ? 'bg-cyan-600 text-white shadow'
+                          : 'bg-stone-900 text-cyan-400/80 hover:text-cyan-200 border border-stone-800'
+                      }`}
+                    >
+                      🔒 관리자 계정 ({agencyUsers.filter((u) => AdminService.isProtectedAdmin(u).isProtected).length})
+                    </button>
+                    <button
+                      onClick={() => setMemberFilter('sanctioned')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                        memberFilter === 'sanctioned'
+                          ? 'bg-amber-600 text-white shadow'
+                          : 'bg-stone-900 text-stone-400 hover:text-white border border-stone-800'
+                      }`}
+                    >
+                      ⚠️ 제재/정지 ({
+                        agencyUsers.filter(
+                          (u) =>
+                            (u.sanctionCount && u.sanctionCount > 0) ||
+                            u.isBanned ||
+                            (u.sanctionExpiresAt && u.sanctionExpiresAt > Date.now())
+                        ).length
+                      })
+                    </button>
+                    <button
+                      onClick={() => setMemberFilter('online')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                        memberFilter === 'online'
+                          ? 'bg-emerald-600 text-white shadow'
+                          : 'bg-stone-900 text-emerald-400/80 hover:text-emerald-200 border border-stone-800'
+                      }`}
+                    >
+                      🟢 접속중 ({
+                        agencyUsers.filter((u) => u.isOnline || (u.lastActive && Date.now() - u.lastActive < 300000)).length
+                      })
+                    </button>
+                  </div>
+
+                  {/* Right: Search & Sort */}
+                  <div className="flex flex-col sm:flex-row items-center gap-2">
+                    <div className="relative w-full sm:w-60">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                      <input
+                        type="text"
+                        value={userSearchTerm}
+                        onChange={(e) => setUserSearchTerm(e.target.value)}
+                        placeholder="이름, 이메일, 기관 검색..."
+                        className="w-full bg-stone-900 border border-stone-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-rose-500"
+                      />
+                      {userSearchTerm && (
+                        <button
+                          onClick={() => setUserSearchTerm('')}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
+                    <select
+                      value={memberSort}
+                      onChange={(e) => setMemberSort(e.target.value as any)}
+                      className="w-full sm:w-auto bg-stone-900 border border-stone-800 rounded-xl px-3 py-1.5 text-xs text-stone-200 focus:outline-none focus:border-rose-500 font-medium"
+                    >
+                      <option value="recent_active">최종접속일 최신순</option>
+                      <option value="attendance_days">누적접속일(출석) 많은순</option>
+                      <option value="created_at">가입일시 최신순</option>
+                      <option value="popularity">호감도(인기도) 높은순</option>
+                      <option value="sanction">제재 차수 높은순</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Members Table */}
+              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl overflow-hidden shadow-xl">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-stone-900/95 text-stone-400 border-b border-stone-800 font-semibold tracking-wide">
+                      <tr>
+                        <th className="px-4 py-3.5">회원정보</th>
+                        <th className="px-4 py-3.5">소속 기관</th>
+                        <th className="px-4 py-3.5">최종 접속일</th>
+                        <th className="px-4 py-3.5">누적 접속일</th>
+                        <th className="px-4 py-3.5">호감도</th>
+                        <th className="px-4 py-3.5">제재 현황</th>
+                        <th className="px-4 py-3.5 text-right">회원 관리 설정</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800/70">
+                      {agencyUsers
+                        .filter((u) => {
+                          if (userSearchTerm) {
+                            const term = userSearchTerm.toLowerCase();
+                            const matchName = u.name?.toLowerCase().includes(term);
+                            const matchEmail = u.email?.toLowerCase().includes(term);
+                            const matchCompany = u.company?.toLowerCase().includes(term);
+                            if (!matchName && !matchEmail && !matchCompany) return false;
+                          }
+                          if (memberFilter === 'regular') {
+                            return !AdminService.isProtectedAdmin(u).isProtected;
+                          }
+                          if (memberFilter === 'admin') {
+                            return AdminService.isProtectedAdmin(u).isProtected;
+                          }
+                          if (memberFilter === 'sanctioned') {
+                            return (
+                              (u.sanctionCount && u.sanctionCount > 0) ||
+                              u.isBanned ||
+                              (u.sanctionExpiresAt && u.sanctionExpiresAt > Date.now())
+                            );
+                          }
+                          if (memberFilter === 'online') {
+                            const status = getUserActiveStatus(u.lastActive);
+                            return status.status === 'online' || u.isOnline;
+                          }
+                          return true;
+                        })
+                        .sort((a, b) => {
+                          if (memberSort === 'recent_active') {
+                            return (b.lastActive || 0) - (a.lastActive || 0);
+                          }
+                          if (memberSort === 'attendance_days') {
+                            return (b.totalAttendanceDays || 1) - (a.totalAttendanceDays || 1);
+                          }
+                          if (memberSort === 'created_at') {
+                            return (b.createdAt || 0) - (a.createdAt || 0);
+                          }
+                          if (memberSort === 'popularity') {
+                            return (b.popularity || 100) - (a.popularity || 100);
+                          }
+                          if (memberSort === 'sanction') {
+                            return (b.sanctionCount || 0) - (a.sanctionCount || 0);
+                          }
+                          return 0;
+                        })
+                        .map((user, idx) => {
+                          const status = getUserActiveStatus(user.lastActive);
+                          const isOnline = status.status === 'online' || user.isOnline;
+                          const protection = AdminService.isProtectedAdmin(user);
+
+                          // Date formatting for last active
+                          const lastActiveDate = user.lastActive ? new Date(user.lastActive) : null;
+                          const formattedLastActive = lastActiveDate
+                            ? `${lastActiveDate.toLocaleDateString('ko-KR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                              })} ${lastActiveDate.toLocaleTimeString('ko-KR', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}`
+                            : '접속 이력 없음';
+
+                          // Sanction status check
+                          const isBanned = user.isBanned;
+                          const isCurrentlyRestricted =
+                            user.sanctionExpiresAt && user.sanctionExpiresAt > Date.now();
+
+                          return (
+                            <tr
+                              key={`member-row-${user.id}-${idx}`}
+                              className="hover:bg-stone-900/60 transition-colors"
+                            >
+                              {/* 1. Member Profile & Role */}
+                              <td className="px-4 py-3.5">
+                                <div className="flex items-center gap-3">
+                                  <div className="relative shrink-0">
+                                    <img
+                                      src={user.photoUrl || getAvatarForUser(user.gender, user.id)}
+                                      alt={user.name}
+                                      onError={(e) => handleAvatarError(e, user.gender, user.id)}
+                                      className="w-10 h-10 rounded-xl object-cover border border-stone-700 bg-stone-900 shadow-sm"
+                                    />
+                                    {isOnline && (
+                                      <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-stone-950 rounded-full" />
+                                    )}
+                                  </div>
+
+                                  <div>
+                                    <div className="font-bold text-stone-100 flex items-center gap-1.5 flex-wrap">
+                                      <span className="text-sm">{user.name}</span>
+                                      <span className="text-[11px] text-stone-400 font-normal">
+                                        ({user.gender === 'female' ? '여' : '남'}, {user.age || calculateAge(user.birthDate)}세)
+                                      </span>
+
+                                      {/* Role Badge */}
+                                      {protection.isProtected ? (
+                                        protection.role === 'master_admin' ? (
+                                          <span className="inline-flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10px] font-black px-2 py-0.5 rounded-md shadow-sm">
+                                            <Award className="w-3 h-3 text-amber-400" />
+                                            최고관리자
+                                          </span>
+                                        ) : (
+                                          <span className="inline-flex items-center gap-1 bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 text-[10px] font-black px-2 py-0.5 rounded-md shadow-sm">
+                                            <ShieldCheck className="w-3 h-3 text-cyan-400" />
+                                            기관관리자
+                                          </span>
+                                        )
+                                      ) : (
+                                        <span className="bg-stone-800/90 text-stone-400 border border-stone-700 text-[10px] font-medium px-1.5 py-0.5 rounded">
+                                          일반회원
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-stone-400 font-mono text-[11px] mt-0.5 flex items-center gap-1">
+                                      <span>{user.email}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2. Company & Verification */}
+                              <td className="px-4 py-3.5">
+                                <div className="text-stone-200 font-semibold text-xs">{user.company}</div>
+                                <div className="text-[10px] text-emerald-400 flex items-center gap-1 mt-0.5">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                  <span>공직자 인증 완료</span>
+                                </div>
+                              </td>
+
+                              {/* 3. Last Access Date */}
+                              <td className="px-4 py-3.5">
+                                <div className="flex items-center gap-1.5 mb-1">
+                                  <span
+                                    className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                                      isOnline
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                        : 'bg-stone-800 text-stone-300'
+                                    }`}
+                                  >
+                                    <span
+                                      className={`w-1.5 h-1.5 rounded-full ${
+                                        isOnline ? 'bg-emerald-400 animate-pulse' : 'bg-stone-500'
+                                      }`}
+                                    />
+                                    {isOnline ? '접속중' : status.label}
+                                  </span>
+                                </div>
+                                <div className="text-stone-400 font-mono text-[11px] flex items-center gap-1">
+                                  <Clock className="w-3 h-3 text-stone-500" />
+                                  <span>{formattedLastActive}</span>
+                                </div>
+                              </td>
+
+                              {/* 4. Cumulative Access Days (누적접속일) */}
+                              <td className="px-4 py-3.5">
+                                <div className="flex items-center gap-1.5 font-bold text-amber-300 text-xs">
+                                  <CalendarDays className="w-3.5 h-3.5 text-amber-400" />
+                                  <span>누적 {user.totalAttendanceDays || 1}일</span>
+                                </div>
+                                <div className="text-[11px] text-stone-400 mt-0.5">
+                                  연속 출석 {user.consecutiveAttendanceDays || 1}일 (총 {user.loginCount || 1}회 접속)
+                                </div>
+                              </td>
+
+                              {/* 5. Popularity */}
+                              <td className="px-4 py-3.5">
+                                <div className="font-bold text-rose-400 font-mono text-xs">
+                                  {user.popularity || 100}점
+                                </div>
+                                <div className="text-[10px] text-stone-500">호감도 지수</div>
+                              </td>
+
+                              {/* 6. Sanction Status */}
+                              <td className="px-4 py-3.5">
+                                {isBanned ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-rose-950/80 text-rose-300 border border-rose-600/60 rounded-lg text-[11px] font-black">
+                                    <UserX className="w-3.5 h-3.5 text-rose-400" />
+                                    영구 이용정지
+                                  </span>
+                                ) : isCurrentlyRestricted ? (
+                                  <div className="space-y-0.5">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-rose-500/20 text-rose-300 border border-rose-500/40 rounded-md text-[11px] font-bold">
+                                      <AlertTriangle className="w-3 h-3 text-rose-400" />
+                                      {user.sanctionCount}차 정지 진행중
+                                    </span>
+                                    <div className="text-[10px] text-stone-400 font-mono">
+                                      ~{new Date(user.sanctionExpiresAt!).toLocaleDateString()} 해제예정
+                                    </div>
+                                  </div>
+                                ) : user.sanctionCount && user.sanctionCount > 0 ? (
+                                  <div className="space-y-0.5">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-500/10 text-amber-300 border border-amber-500/30 rounded-md text-[11px] font-medium">
+                                      {user.sanctionCount}차 제재 이력
+                                    </span>
+                                    <div className="text-[10px] text-emerald-400/90 font-medium">
+                                      (현재 정상 이용)
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-emerald-400 text-xs font-semibold">
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    정상 이용중
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 7. Action Buttons (Protection Enforced) */}
+                              <td className="px-4 py-3.5 text-right">
+                                {protection.isProtected ? (
+                                  <div
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-stone-900/90 border border-stone-700/80 rounded-xl text-[11px] font-bold text-stone-400 shadow-sm cursor-not-allowed select-none"
+                                    title="최고관리자 및 기관관리자 계정은 시스템 보호 대상이므로 제재, 제재해지, 선물 설정이 불가능합니다."
+                                  >
+                                    <Lock className="w-3.5 h-3.5 text-amber-400" />
+                                    <span>관리자 보호 (설정 불가)</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                    {/* 1. Gift Button */}
+                                    <button
+                                      onClick={() => handleOpenGiftModal(user)}
+                                      title="1:1 선물 지급"
+                                      className="px-2.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
+                                    >
+                                      <Gift className="w-3.5 h-3.5 text-amber-400" />
+                                      <span>선물</span>
+                                    </button>
+
+                                    {/* 2. Sanction Button */}
+                                    <button
+                                      onClick={() => handleOpenSanctionModal(user)}
+                                      title="운영정책 위반 제재 조치"
+                                      className="px-2.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm"
+                                    >
+                                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                                      <span>제재</span>
+                                    </button>
+
+                                    {/* 3. Lift Sanction Button (Enhanced if currently sanctioned) */}
+                                    <button
+                                      onClick={() => handleOpenLiftModal(user)}
+                                      title="소명 접수 및 제재 해지"
+                                      className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1 shadow-sm ${
+                                        isBanned || isCurrentlyRestricted || (user.sanctionCount && user.sanctionCount > 0)
+                                          ? 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-emerald-950/40 animate-pulse'
+                                          : 'bg-stone-800 text-stone-300 hover:bg-stone-700 border border-stone-700'
+                                      }`}
+                                    >
+                                      <Unlock className="w-3.5 h-3.5" />
+                                      <span>해지</span>
+                                    </button>
+
+                                    {/* 4. User Details Modal Button */}
+                                    <button
+                                      onClick={() => setSelectedUserDetail(user)}
+                                      title="상세 정보 보기"
+                                      className="p-1.5 bg-stone-800/80 hover:bg-stone-700 text-stone-300 hover:text-white rounded-xl border border-stone-700 transition-colors"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Empty State */}
+                {agencyUsers.length === 0 && (
+                  <div className="p-12 text-center text-stone-500 space-y-2">
+                    <Users className="w-10 h-10 mx-auto opacity-40" />
+                    <p className="text-sm font-semibold">소속 기관에 등록된 회원이 없습니다.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 3: MASTER ADMIN ONLY - AGENCY ADMINS & GRANT BOXES */}
+          {/* ========================================================================= */}
+          {activeTab === 'agency_admins' && adminProfile.isMaster && (
+            <div className="space-y-6">
+              {/* Add Agency Admin Form */}
+              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-6 shadow-xl">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-1">
+                  <Building2 className="w-5 h-5 text-amber-400" />
+                  <span>신규 기관 관리자 계정 생성 (기관별 복수 관리자 지원)</span>
+                </h3>
+                <p className="text-xs text-stone-400 mb-6">
+                  각 공공기관 도메인(@기관)별로 가입 심사 및 이벤트를 주관할 관리자 계정을 생성합니다. 한 기관에 여러 명의 관리자를 만들 수 있습니다.
+                </p>
+
+                <form onSubmit={handleCreateAgencyAdmin} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">소속 기관 선택/입력</label>
+                    <select
+                      value={newAdminAgencyDomain}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewAdminAgencyDomain(val);
+                        const matched = DEFAULT_ALLOWED_DOMAINS.find((d) => d.domain === val);
+                        if (matched) setNewAdminAgencyName(matched.companyName);
+                      }}
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                    >
+                      {DEFAULT_ALLOWED_DOMAINS.map((d) => (
+                        <option key={d.domain} value={d.domain}>
+                          {d.companyName} (@{d.domain})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">기관명 (표시용)</label>
+                    <input
+                      type="text"
+                      value={newAdminAgencyName}
+                      onChange={(e) => setNewAdminAgencyName(e.target.value)}
+                      placeholder="예: 한국전력공사"
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">관리자 이메일 (로그인 ID)</label>
+                    <input
+                      type="email"
+                      value={newAdminEmail}
+                      onChange={(e) => setNewAdminEmail(e.target.value)}
+                      placeholder={`예: manager@${newAdminAgencyDomain}`}
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">담당자 이름</label>
+                    <input
+                      type="text"
+                      value={newAdminName}
+                      onChange={(e) => setNewAdminName(e.target.value)}
+                      placeholder="예: 김전력"
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">소속 부서</label>
+                    <input
+                      type="text"
+                      value={newAdminDept}
+                      onChange={(e) => setNewAdminDept(e.target.value)}
+                      placeholder="예: 인재경영처 복지부"
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">비밀번호</label>
+                    <input
+                      type="text"
+                      value={newAdminPassword}
+                      onChange={(e) => setNewAdminPassword(e.target.value)}
+                      placeholder="비밀번호 입력"
+                      className="w-full bg-stone-900 border border-stone-700 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 lg:col-span-3 flex justify-end pt-2">
+                    <button
+                      type="submit"
+                      className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs flex items-center gap-2 transition-all shadow-lg shadow-amber-950/40"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>기관 관리자 등록하기</span>
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Agency Admins List & Grant Boxes */}
+              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl overflow-hidden shadow-xl">
+                <div className="p-4 border-b border-stone-800 flex items-center justify-between">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <span>등록된 기관 관리자 목록</span>
+                    <span className="text-xs text-stone-400 font-mono">({allAdmins.length}명)</span>
+                  </h4>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-stone-900 text-stone-400 uppercase font-semibold">
+                      <tr>
+                        <th className="px-4 py-3">기관명 / 도메인</th>
+                        <th className="px-4 py-3">담당자 / 이메일</th>
+                        <th className="px-4 py-3">부서</th>
+                        <th className="px-4 py-3">비밀번호</th>
+                        <th className="px-4 py-3">이벤트 상자 잔여량</th>
+                        <th className="px-4 py-3 text-right">상자 추가지급 / 관리</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-800/60">
+                      {allAdmins.map((admin, idx) => (
+                        <tr key={`admin-row-${admin.id}-${idx}`} className="hover:bg-stone-900/50 transition-colors">
+                          <td className="px-4 py-3">
+                            <div className="font-bold text-white">{admin.agencyName}</div>
+                            <div className="text-stone-400 font-mono text-[11px]">@{admin.agencyDomain}</div>
+                          </td>
+
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-stone-200">{admin.name}</div>
+                            <div className="text-stone-400 font-mono text-[11px]">{admin.email}</div>
+                          </td>
+
+                          <td className="px-4 py-3 text-stone-300">{admin.department || '-'}</td>
+
+                          <td className="px-4 py-3 text-stone-400 font-mono">{admin.passwordPlain}</td>
+
+                          <td className="px-4 py-3">
+                            <span className="font-bold text-amber-300 text-sm font-mono">
+                              {admin.eventBoxesRemaining?.toLocaleString() || 0}개
+                            </span>
+                          </td>
+
+                          <td className="px-4 py-3 text-right space-x-2">
+                            <button
+                              onClick={() => setGrantTargetAdmin(admin)}
+                              className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1"
+                            >
+                              <Gift className="w-3.5 h-3.5" />
+                              <span>상자 추가지급</span>
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteAgencyAdmin(admin.id)}
+                              className="p-1.5 text-stone-500 hover:text-rose-400 rounded-lg transition-colors"
+                              title="관리자 삭제"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 4: ADMIN COMMUNICATION BOARD */}
+          {/* ========================================================================= */}
+          {activeTab === 'admin_board' && (
+            <div className="space-y-6">
+              {/* Board Header & Controls */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <MessageSquare className="w-5 h-5 text-rose-400" />
+                    <span>최고관리자 ↔ 기관관리자 소통 게시판</span>
+                  </h3>
+                  <p className="text-xs text-stone-400 mt-0.5">
+                    기관별 건의사항, 이벤트 상자 추가 지원 요청, 운영 가이드 및 질의응답을 공유합니다.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <select
+                    value={boardCategoryFilter}
+                    onChange={(e) => setBoardCategoryFilter(e.target.value as any)}
+                    className="bg-stone-950 border border-stone-800 rounded-xl px-3 py-2 text-xs text-stone-300 focus:outline-none focus:border-rose-500"
+                  >
+                    <option value="all">전체 카테고리</option>
+                    <option value="notice">공지사항</option>
+                    <option value="request">지원/안건요청</option>
+                    <option value="policy">운영정책</option>
+                    <option value="free">자유의견</option>
+                  </select>
+
+                  <button
+                    onClick={() => setIsNewPostModalOpen(true)}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-lg shadow-rose-950/40"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>새 게시글 작성</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Posts List */}
+              <div className="space-y-4">
+                {boardPosts
+                  .filter((p) => boardCategoryFilter === 'all' || p.category === boardCategoryFilter)
+                  .map((post) => {
+                    const isAuthor = post.authorEmail.toLowerCase() === adminProfile.email.toLowerCase();
+
+                    return (
+                      <div
+                        key={post.id}
+                        className={`bg-stone-950/80 border rounded-2xl p-5 shadow-lg transition-all ${
+                          post.isPinned ? 'border-amber-500/50 ring-1 ring-amber-500/20' : 'border-stone-800'
+                        }`}
+                      >
+                        <div className="space-y-3">
+                          {/* Post Header */}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {post.isPinned && (
+                                <span className="bg-amber-400 text-stone-950 text-[10px] font-black px-2 py-0.5 rounded-md flex items-center gap-1">
+                                  <Pin className="w-3 h-3 fill-stone-950" />
+                                  중요 공지
+                                </span>
+                              )}
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                  post.category === 'notice'
+                                    ? 'bg-rose-500/20 text-rose-300'
+                                    : post.category === 'request'
+                                    ? 'bg-amber-500/20 text-amber-300'
+                                    : 'bg-stone-800 text-stone-300'
+                                }`}
+                              >
+                                {post.category === 'notice'
+                                  ? '공지'
+                                  : post.category === 'request'
+                                  ? '요청'
+                                  : post.category === 'policy'
+                                  ? '정책'
+                                  : '자유'}
+                              </span>
+                              <h4 className="text-base font-bold text-white">{post.title}</h4>
+                            </div>
+
+                            <div className="flex items-center gap-2 text-xs text-stone-400">
+                              <span>{new Date(post.createdAt).toLocaleDateString('ko-KR')}</span>
+                              {(isAuthor || adminProfile.isMaster) && (
+                                <button
+                                  onClick={() => handleDeletePost(post.id)}
+                                  className="text-stone-500 hover:text-rose-400 transition-colors p-1"
+                                  title="게시글 삭제"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Post Content */}
+                          <p className="text-xs text-stone-300 leading-relaxed whitespace-pre-line">{post.content}</p>
+
+                          {/* Author Tag */}
+                          <div className="flex items-center justify-between text-xs text-stone-500 pt-2 border-t border-stone-900">
+                            <div className="flex items-center gap-2">
+                              <span className="font-semibold text-stone-300">{post.authorName}</span>
+                              <span>({post.agencyName})</span>
+                            </div>
+
+                            <button
+                              onClick={() => setActivePostComments(activePostComments === post.id ? null : post.id)}
+                              className="text-xs font-bold text-rose-400 hover:text-rose-300 flex items-center gap-1"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>댓글 {post.comments?.length || 0}개</span>
+                            </button>
+                          </div>
+
+                          {/* Comments Drawer */}
+                          {activePostComments === post.id && (
+                            <div className="mt-4 pt-3 border-t border-stone-800/80 space-y-3">
+                              <div className="space-y-2">
+                                {post.comments && post.comments.length > 0 ? (
+                                  post.comments.map((comm) => (
+                                    <div key={comm.id} className="bg-stone-900/90 rounded-xl p-3 border border-stone-800/80 text-xs">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="font-bold text-stone-200">{comm.authorName}</span>
+                                          <span className="text-[10px] text-stone-400">({comm.agencyName})</span>
+                                          {comm.isMaster && (
+                                            <span className="text-[9px] bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded">
+                                              총괄
+                                            </span>
+                                          )}
+                                        </div>
+                                        <span className="text-[10px] text-stone-500">
+                                          {new Date(comm.createdAt).toLocaleTimeString('ko-KR', {
+                                            hour: '2-digit',
+                                            minute: '2-digit',
+                                          })}
+                                        </span>
+                                      </div>
+                                      <p className="text-stone-300">{comm.content}</p>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <p className="text-xs text-stone-500 italic text-center py-2">등록된 댓글이 없습니다.</p>
+                                )}
+                              </div>
+
+                              {/* Comment Input */}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="text"
+                                  value={commentInput}
+                                  onChange={(e) => setCommentInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleAddComment(post.id);
+                                  }}
+                                  placeholder="댓글을 입력하세요..."
+                                  className="flex-1 bg-stone-900 border border-stone-800 rounded-xl px-3 py-2 text-xs text-white placeholder-stone-500 focus:outline-none focus:border-rose-500"
+                                />
+                                <button
+                                  onClick={() => handleAddComment(post.id)}
+                                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-colors"
+                                >
+                                  등록
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 5: REPORTS & SANCTIONS MODERATION */}
+          {/* ========================================================================= */}
+          {activeTab === 'reports' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-rose-400" />
+                  <span>신고 접수 및 제재/소명 심사 관리</span>
+                </h3>
+                <p className="text-xs text-stone-400 mt-0.5">
+                  신고된 건의 증거 스냅샷(대화 내역, 프로필 변경 기록)을 감사하고, 부당 제재 해제 및 보상 지급 또는 허위신고자 역제재를 처리합니다.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                {reports.map((report, idx) => (
+                  <div
+                    key={`report-card-${report.id}-${idx}`}
+                    className="bg-stone-950/80 border border-stone-800 rounded-2xl p-5 shadow-lg space-y-4"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                            report.status === 'pending'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : report.status === 'compensated_justified'
+                              ? 'bg-emerald-500/20 text-emerald-300'
+                              : 'bg-stone-800 text-stone-400'
+                          }`}
+                        >
+                          {report.status === 'pending'
+                            ? '심사 대기중'
+                            : report.status === 'compensated_justified'
+                            ? '소명 승인 (제재해제/보상)'
+                            : report.status === 'dismissed_false'
+                            ? '허위신고 판정'
+                            : '정당신고 확인'}
+                        </span>
+                        <h4 className="text-sm font-bold text-white">
+                          피신고자: <span className="text-rose-400">{report.targetUserName}</span> ({report.targetUserEmail})
+                        </h4>
+                      </div>
+                      <span className="text-xs text-stone-500">{new Date(report.timestamp).toLocaleString('ko-KR')}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-stone-900/90 rounded-xl p-3 border border-stone-800/80 text-xs">
+                      <div>
+                        <span className="text-stone-400 block mb-0.5">신고 사유:</span>
+                        <span className="font-semibold text-stone-200">
+                          {report.reason} {report.customReasonDetail ? `(${report.customReasonDetail})` : ''}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-stone-400 block mb-0.5">적용된 즉시 제재:</span>
+                        <span className="font-bold text-rose-400">
+                          누적 {report.targetSanctionRound}차 제재 ({report.appliedSanctionHours}시간 제한)
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Chat and Bio Audit Preview */}
+                    {report.chatHistorySnapshot && report.chatHistorySnapshot.length > 0 && (
+                      <div className="bg-stone-900/60 rounded-xl p-3 border border-stone-800 text-xs space-y-1.5">
+                        <span className="text-[11px] font-bold text-stone-400">대화 증거 스냅샷 ({report.chatHistorySnapshot.length}개 메시지)</span>
+                        <div className="max-h-28 overflow-y-auto space-y-1 pr-2">
+                          {report.chatHistorySnapshot.slice(-5).map((m) => (
+                            <div key={m.id} className="text-stone-300">
+                              <strong className="text-stone-400">{m.senderId === report.targetUserId ? report.targetUserName : report.reporterName}:</strong>{' '}
+                              {m.text}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Moderation Controls */}
+                    {report.status === 'pending' && (
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-stone-800">
+                        <button
+                          onClick={() => {
+                            setSelectedReport(report);
+                            setModerationAction('reduce_sanction');
+                          }}
+                          className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-xl text-xs font-bold transition-colors"
+                        >
+                          제재 차감/해제 & 보상 지급
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedReport(report);
+                            setModerationAction('false_report');
+                          }}
+                          className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl text-xs font-bold transition-colors"
+                        >
+                          허위 신고 역제재 (신고자 1회 누적)
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedReport(report);
+                            setModerationAction('reward_reporter');
+                          }}
+                          className="px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition-colors"
+                        >
+                          정당 신고 확인 & 신고자 포상
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 6: STATS & DB OPTIMIZATION */}
+          {/* ========================================================================= */}
+          {activeTab === 'stats' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-5 shadow-lg">
+                  <span className="text-xs text-stone-400 block mb-1">전체 가입 회원수</span>
+                  <span className="text-2xl font-black text-white font-mono">{stats.totalUsers}명</span>
+                </div>
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-5 shadow-lg">
+                  <span className="text-xs text-stone-400 block mb-1">현재/최근 접속 회원</span>
+                  <span className="text-2xl font-black text-emerald-400 font-mono">{stats.activeUsersNow}명</span>
+                </div>
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-5 shadow-lg">
+                  <span className="text-xs text-stone-400 block mb-1">기관 관리자 계정수</span>
+                  <span className="text-2xl font-black text-amber-400 font-mono">{stats.agencyAdminsCount}명</span>
+                </div>
+                <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-5 shadow-lg">
+                  <span className="text-xs text-stone-400 block mb-1">배정된 총 이벤트 상자</span>
+                  <span className="text-2xl font-black text-rose-400 font-mono">
+                    {stats.totalEventBoxesDistributed.toLocaleString()}개
+                  </span>
+                </div>
+              </div>
+
+              {/* DB Optimization Block */}
+              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-6 shadow-xl space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-blue-500/20 text-blue-400 flex items-center justify-center">
+                    <Database className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="text-base font-bold text-white">데이터베이스 자동 만료(72시간 TTL) 및 최적화</h4>
+                    <p className="text-xs text-stone-400">
+                      채팅 메시지는 72시간 경과 후 자동으로 데이터베이스에서 삭제되어 개인정보와 성능을 완벽히 보호합니다.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    onClick={handleManualDbOptimize}
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition-colors shadow-lg shadow-blue-950/40"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    <span>지금 72시간 초과 만료 데이터 즉시 정리하기</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* MODAL: DIRECT GIFT TO USER */}
+      {/* ========================================================================= */}
+      {directGiftUser && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-700 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Gift className="w-5 h-5 text-amber-400" />
+                <span>[{directGiftUser.name}] 사원 1:1 선물 지급</span>
+              </h3>
+              <button onClick={() => setDirectGiftUser(null)} className="text-stone-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSendDirectGift} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">지급할 아이템 선택</label>
+                <select
+                  value={directGiftType}
+                  onChange={(e) => setDirectGiftType(e.target.value as any)}
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                >
+                  <option value="welcome_box">환영 박스 (아이템 뽑기)</option>
+                  <option value="boost_antenna">광역 검색 안테나 (1시간 반경확장)</option>
+                  <option value="message_ticket">메시지 횟수권</option>
+                  <option value="popularity_50">호감도(인기도) +50점</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">수량</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={directGiftCount}
+                  onChange={(e) => setDirectGiftCount(Number(e.target.value))}
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">전달 메시지 (선택)</label>
+                <input
+                  type="text"
+                  value={directGiftMemo}
+                  onChange={(e) => setDirectGiftMemo(e.target.value)}
+                  placeholder="예: 이달의 우수 사원 소통 장려 선물"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDirectGiftUser(null)}
+                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs"
+                >
+                  선물 지급 완료
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: GRANT BOXES TO AGENCY ADMIN (MASTER ONLY) */}
+      {/* ========================================================================= */}
+      {grantTargetAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-700 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Gift className="w-5 h-5 text-amber-400" />
+                <span>[{grantTargetAdmin.agencyName}] 상자 추가 지급</span>
+              </h3>
+              <button onClick={() => setGrantTargetAdmin(null)} className="text-stone-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteGrantBoxes} className="space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">
+                  지급 대상 관리자: <strong className="text-white">{grantTargetAdmin.name}</strong> ({grantTargetAdmin.email})
+                </label>
+                <p className="text-[11px] text-stone-400">
+                  현재 보유량: {grantTargetAdmin.eventBoxesRemaining?.toLocaleString() || 0}개
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">추가 지급할 이벤트 상자 수량</label>
+                <input
+                  type="number"
+                  min={100}
+                  step={100}
+                  value={grantBoxesAmount}
+                  onChange={(e) => setGrantBoxesAmount(Number(e.target.value))}
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">지급 사유 / 메모</label>
+                <input
+                  type="text"
+                  value={grantMemo}
+                  onChange={(e) => setGrantMemo(e.target.value)}
+                  placeholder="예: 분기 특별 소통 이벤트 지원"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setGrantTargetAdmin(null)}
+                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-bold rounded-xl text-xs"
+                >
+                  지급 확정하기
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: NEW BOARD POST */}
+      {/* ========================================================================= */}
+      {isNewPostModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-700 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-rose-400" />
+                <span>관리자 소통 게시글 작성</span>
+              </h3>
+              <button onClick={() => setIsNewPostModalOpen(false)} className="text-stone-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateBoardPost} className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-stone-400 mb-1 block">카테고리</label>
+                  <select
+                    value={newPostCategory}
+                    onChange={(e) => setNewPostCategory(e.target.value as any)}
+                    className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                  >
+                    <option value="request">지원/안건요청</option>
+                    <option value="notice">공지사항</option>
+                    <option value="policy">운영정책</option>
+                    <option value="free">자유의견</option>
+                  </select>
+                </div>
+
+                {adminProfile.isMaster && (
+                  <div className="flex items-center gap-2 pt-6">
+                    <input
+                      type="checkbox"
+                      id="pinCheck"
+                      checked={newPostPinned}
+                      onChange={(e) => setNewPostPinned(e.target.checked)}
+                      className="rounded border-stone-700 text-amber-500 focus:ring-amber-400"
+                    />
+                    <label htmlFor="pinCheck" className="text-xs font-bold text-amber-300 cursor-pointer">
+                      상단 중요 공지로 고정 (Pin)
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">제목</label>
+                <input
+                  type="text"
+                  value={newPostTitle}
+                  onChange={(e) => setNewPostTitle(e.target.value)}
+                  placeholder="게시글 제목을 입력하세요"
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-stone-400 mb-1 block">내용</label>
+                <textarea
+                  rows={5}
+                  value={newPostContent}
+                  onChange={(e) => setNewPostContent(e.target.value)}
+                  placeholder="안건 또는 공유할 내용을 작성하세요..."
+                  className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNewPostModalOpen(false)}
+                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs"
+                >
+                  게시글 등록
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: MODERATION ACTION */}
+      {/* ========================================================================= */}
+      {moderationAction && selectedReport && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-stone-900 border border-stone-700 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-rose-400" />
+                <span>심사 처리 확정</span>
+              </h3>
+              <button onClick={() => setModerationAction(null)} className="text-stone-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleExecuteModeration} className="space-y-4">
+              {moderationAction === 'reduce_sanction' && (
+                <>
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">차감할 제재 차수</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={reduceRounds}
+                      onChange={(e) => setReduceRounds(Number(e.target.value))}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">지급할 보상 환영박스</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={rewardBoxes}
+                      onChange={(e) => setRewardBoxes(Number(e.target.value))}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-stone-400 mb-1 block">회원에게 전달될 소명 안내 메시지</label>
+                    <input
+                      type="text"
+                      value={noticeMessage}
+                      onChange={(e) => setNoticeMessage(e.target.value)}
+                      className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                    />
+                  </div>
+                </>
+              )}
+
+              {moderationAction === 'false_report' && (
+                <div>
+                  <label className="text-xs font-semibold text-stone-400 mb-1 block">허위 신고 사유 메모</label>
+                  <textarea
+                    rows={3}
+                    value={adminActionNotes}
+                    onChange={(e) => setAdminActionNotes(e.target.value)}
+                    placeholder="신고 내역 및 대화 분석 결과 악의적인 허위 신고로 확인됨."
+                    className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+              )}
+
+              {moderationAction === 'reward_reporter' && (
+                <div>
+                  <label className="text-xs font-semibold text-stone-400 mb-1 block">신고자 포상 환영박스 개수</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={rewardBoxes}
+                    onChange={(e) => setRewardBoxes(Number(e.target.value))}
+                    className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
+                  />
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setModerationAction(null)}
+                  className="px-4 py-2 bg-stone-800 text-stone-300 rounded-xl text-xs font-semibold"
+                >
+                  취소
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs"
+                >
+                  처리 확정
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

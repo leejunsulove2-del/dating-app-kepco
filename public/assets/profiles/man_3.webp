@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+    <defs><linearGradient id="bg_dog3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#e0e7ff"/><stop offset="100%" stop-color="#c7d2fe"/></linearGradient></defs>
+    <circle cx="50" cy="50" r="48" fill="url(#bg_dog3)"/>
+    <polygon points="26,45 18,14 46,30" fill="#334155"/><polygon points="28,40 23,22 41,32" fill="#cbd5e1"/>
+    <polygon points="74,45 82,14 54,30" fill="#334155"/><polygon points="72,40 77,22 59,32" fill="#cbd5e1"/>
+    <circle cx="50" cy="54" r="32" fill="#475569"/><polygon points="50,30 38,48 50,44 62,48" fill="#f8fafc"/>
+    <path d="M30,55 Q50,38 70,55 Q72,82 50,84 Q28,82 30,55 Z" fill="#f8fafc"/>
+    <ellipse cx="38" cy="51" rx="4" ry="4.5" fill="#0284c7"/><circle cx="39.5" cy="49.5" r="1.5" fill="#ffffff"/>
+    <ellipse cx="62" cy="51" rx="4" ry="4.5" fill="#0284c7"/><circle cx="63.5" cy="49.5" r="1.5" fill="#ffffff"/>
+    <polygon points="46,60 54,60 50,65" fill="#0f172a"/><path d="M46,67 Q50,71 54,67" stroke="#0f172a" stroke-width="2" fill="none" stroke-linecap="round"/>
+  </svg>

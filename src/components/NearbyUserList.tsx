@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Building2, MapPin, ChevronUp, ChevronDown, Flame, Tag } from 'lucide-react';
 import { UserProfile } from '../types';
 import { formatDistance, getUserActiveStatus } from '../utils/geo';
+import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
 
 interface NearbyUserListProps {
   nearbyUsers: UserProfile[];
@@ -124,7 +125,7 @@ export const NearbyUserList: React.FC<NearbyUserListProps> = ({
           </div>
         ) : (
           <div className="flex sm:grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 h-full items-center sm:items-stretch">
-            {displayedUsers.map((user) => {
+            {displayedUsers.map((user, idx) => {
               const isSelected = selectedUser?.id === user.id;
               const statusInfo = getUserActiveStatus(user.lastActive);
               const isOnline = statusInfo.status === 'online';
@@ -134,7 +135,7 @@ export const NearbyUserList: React.FC<NearbyUserListProps> = ({
 
               return (
                 <div
-                  key={user.id}
+                  key={`nearby-user-${user.id}-${idx}`}
                   id={`nearby-card-${user.id}`}
                   onClick={() => onSelectUser(user)}
                   className={`min-w-[260px] sm:min-w-0 bg-white rounded-2xl border p-3 shadow-xs hover:shadow-md transition-all cursor-pointer flex gap-3 items-center shrink-0 ${
@@ -144,8 +145,13 @@ export const NearbyUserList: React.FC<NearbyUserListProps> = ({
                   }`}
                 >
                   {/* Avatar */}
-                  <div className="relative w-16 h-16 rounded-xl overflow-hidden shrink-0 bg-stone-100">
-                    <img src={user.photoUrl} alt={user.name} className="w-full h-full object-cover" />
+                  <div className="relative w-16 h-16 rounded-xl overflow-hidden shrink-0 bg-stone-100 border border-stone-200/60">
+                    <img 
+                      src={user.photoUrl || getAvatarForUser(user.gender, user.id)} 
+                      alt={user.name} 
+                      onError={(e) => handleAvatarError(e, user.gender, user.id)}
+                      className="w-full h-full object-cover" 
+                    />
                     <span
                       className={`absolute top-1 right-1 w-3 h-3 ${
                         isOnline ? 'bg-emerald-500 animate-pulse ring-1 ring-white' : 'bg-amber-400'
