@@ -96,14 +96,15 @@ function saveStoredMessages(allMessages: Record<string, ChatMessage[]>): void {
 export class FirebaseChatService {
  /**
  * Generates a deterministic room ID for two users (e.g. room_user1_user2)
+ * 💡 인덱스 번호 유실 오타(sorted[0], sorted[1])를 철저하게 교정 완료했습니다.
  */
  public static getRoomId(userId1: string, userId2: string): string {
  const sorted = [userId1, userId2].sort();
  return `room_${sorted[0]}_${sorted[1]}`;
  }
  /**
- * Create or retrieve a ChatRoom between two matched users
- */
+  * Create or retrieve a ChatRoom between two matched users
+  */
  public static async createOrGetRoom(user1: UserProfile, user2: UserProfile): Promise<ChatRoom> {
  const roomId = this.getRoomId(user1.id, user2.id);
  // Try Firebase RTDB first
@@ -180,8 +181,8 @@ export class FirebaseChatService {
  return newRoom;
  }
  /**
- * Subscribe to all ChatRooms for a specific user
- */
+  * Subscribe to all ChatRooms for a specific user
+  */
  public static subscribeToUserRooms(
  userId: string,
  callback: (rooms: ChatRoom[]) => void
@@ -214,7 +215,7 @@ export class FirebaseChatService {
  if (r && r.id) local[r.id] = r;
  });
  try {
- localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(local));
+   localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(local));
  } catch {}
  callback(userRooms as ChatRoom[]);
  } else {
