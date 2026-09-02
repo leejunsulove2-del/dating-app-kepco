@@ -15,7 +15,7 @@ import { UserProfile, ChatRoom, ChatMessage } from '../types';
 // Environment variables or fallback config for Firebase
 const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
 
-// 💡 파이어베이스 환경변수 안전 검증식으로 전면 수정
+// 파이어베이스 환경변수 안전 검증식
 const hasRealFirebaseConfig = Boolean(
  env &&
  env.VITE_FIREBASE_API_KEY &&
@@ -48,12 +48,9 @@ if (hasRealFirebaseConfig) {
  db = null;
  }
 }
-
-// Local Storage Fallback & Multi-Tab Broadcast synchronization
 const LOCAL_ROOMS_KEY = 'love_app_rtdb_rooms';
 const LOCAL_MESSAGES_KEY = 'love_app_rtdb_messages';
 const LOCAL_TYPING_KEY = 'love_app_rtdb_typing';
-
 const broadcastChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window
  ? new BroadcastChannel('love_app_rtdb_sync')
  : null;
@@ -93,28 +90,21 @@ function saveStoredMessages(allMessages: Record<string, ChatMessage[]>): void {
  console.error('Failed to save messages locally:', err);
  }
 }
+
 export class FirebaseChatService {
- /**
-  * Generates a deterministic room ID for two users (e.g. room_user1_user2)
-  * 💡 빌드 장애를 일으키던 인덱스 누락 오타를 완벽하게 교정했습니다.
-  */
  public static getRoomId(userId1: string, userId2: string): string {
  const sorted = [userId1, userId2].sort();
  return `room_${sorted[0]}_${sorted[1]}`;
  }
- /**
-  * Create or retrieve a ChatRoom between two matched users
-  */
+
  public static async createOrGetRoom(user1: UserProfile, user2: UserProfile): Promise<ChatRoom> {
  const roomId = this.getRoomId(user1.id, user2.id);
- // Try Firebase RTDB first
  if (db) {
  try {
  const roomRef = ref(db, `chatRooms/${roomId}`);
  const snapshot = await get(roomRef);
  if (snapshot.exists()) {
  const room = snapshot.val() as ChatRoom;
- // Ensure participant profiles are fresh
  room.participantProfiles = {
  [user1.id]: user1,
  [user2.id]: user2,
@@ -126,7 +116,7 @@ export class FirebaseChatService {
  console.warn('Firebase RTDB get room error, fallback to local storage:', err);
  }
  }
- // Check Local Storage
+
  const rooms = getStoredRooms();
  if (rooms[roomId]) {
  rooms[roomId].participantProfiles = {
@@ -136,17 +126,18 @@ export class FirebaseChatService {
  saveStoredRooms(rooms);
  return rooms[roomId];
  }
- // Create Initial System Welcome Message
+
  const welcomeMsg: ChatMessage = {
  id: `msg_sys_${Date.now()}`,
  roomId,
  senderId: 'system',
  receiverId: user2.id,
- text: ` ${user1.name}님과 ${user2.name}님이 매칭되었습니다! 편하게 첫 인사를 🎉 건네보세요.`,
+ text: ` ${user1.name}님과 ${user2.name}님이 매칭되었습니다! 편하게 첫 인사를 건네 보세요.`,
  timestamp: Date.now(),
  read: true,
  type: 'system'
  };
+
  const newRoom: ChatRoom = {
  id: roomId,
  participantIds: [user1.id, user2.id],
@@ -163,7 +154,7 @@ export class FirebaseChatService {
  updatedAt: Date.now(),
  isMatched: true,
  };
- // Save to Firebase RTDB
+
  if (db) {
  try {
  await set(ref(db, `chatRooms/${roomId}`), newRoom);
@@ -172,7 +163,7 @@ export class FirebaseChatService {
  console.warn('Firebase RTDB create room failed, using local storage:', err);
  }
  }
- // Save to Local Storage
+
  rooms[roomId] = newRoom;
  saveStoredRooms(rooms);
  const msgs = getStoredMessages();
@@ -180,9 +171,6 @@ export class FirebaseChatService {
  saveStoredMessages(msgs);
  return newRoom;
  }
- /**
-  * Subscribe to all ChatRooms for a specific user
-  */
  public static subscribeToUserRooms(
  userId: string,
  callback: (rooms: ChatRoom[]) => void
@@ -190,13 +178,14 @@ export class FirebaseChatService {
  const notifyLocal = () => {
  const rooms = getStoredRooms();
  const userRooms = Object.values(rooms)
- .filter((r) => r && r.participantIds && r.participantIds.includes(userId))
+ .filter((r): r is ChatRoom => Boolean(r && r.participantIds && r.participantIds.includes(userId)))
  .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
- callback(userRooms as ChatRoom[]);
+ callback(userRooms);
  };
- // Initial local read
+
  notifyLocal();
  let unsubscribeFirebase: (() => void) | null = null;
+
  if (db) {
  try {
  const roomsRef = ref(db, 'chatRooms');
@@ -205,19 +194,19 @@ export class FirebaseChatService {
  (snapshot) => {
  if (snapshot.exists()) {
  const val = snapshot.val();
- const roomsList: ChatRoom[] = Object.values(val);
+ const roomsList = Object.values(val) as ChatRoom[];
  const userRooms = roomsList
  .filter((r) => r && r.participantIds && r.participantIds.includes(userId))
  .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
- // Merge into local storage for caching
+
  const local = getStoredRooms();
  roomsList.forEach((r) => {
  if (r && r.id) local[r.id] = r;
  });
  try {
-   localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(local));
+ localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(local));
  } catch {}
- callback(userRooms as ChatRoom[]);
+ callback(userRooms);
  } else {
  notifyLocal();
  }
@@ -234,7 +223,7 @@ export class FirebaseChatService {
  console.warn('Firebase RTDB subscribeToUserRooms failed:', err);
  }
  }
- // Multi-tab Broadcast listener & storage event listener
+
  const handleBroadcast = (e: MessageEvent) => {
  if (e.data?.type === 'ROOMS_UPDATED' || e.data?.type === 'MESSAGES_UPDATED') {
  notifyLocal();
@@ -245,17 +234,17 @@ export class FirebaseChatService {
  notifyLocal();
  }
  };
+
  broadcastChannel?.addEventListener('message', handleBroadcast);
  window.addEventListener('storage', handleStorage);
+
  return () => {
  if (unsubscribeFirebase) unsubscribeFirebase();
  broadcastChannel?.removeEventListener('message', handleBroadcast);
  window.removeEventListener('storage', handleStorage);
  };
  }
- /**
- * Subscribe to real-time messages in a specific ChatRoom
- */
+
  public static subscribeToRoomMessages(
  roomId: string,
  callback: (messages: ChatMessage[]) => void
@@ -265,9 +254,10 @@ export class FirebaseChatService {
  const roomMsgs = (allMsgs[roomId] || []).sort((a, b) => a.timestamp - b.timestamp);
  callback(roomMsgs);
  };
- // Initial local notify
+
  notifyLocal();
  let unsubscribeFirebase: (() => void) | null = null;
+
  if (db) {
  try {
  const msgsRef = ref(db, `messages/${roomId}`);
@@ -276,9 +266,9 @@ export class FirebaseChatService {
  (snapshot) => {
  if (snapshot.exists()) {
  const val = snapshot.val();
- const msgList: ChatMessage[] = Object.values(val);
+ const msgList = Object.values(val) as ChatMessage[];
  msgList.sort((a, b) => a.timestamp - b.timestamp);
- // Cache locally
+
  const allLocal = getStoredMessages();
  allLocal[roomId] = msgList;
  try {
@@ -301,6 +291,7 @@ export class FirebaseChatService {
  console.warn('Firebase RTDB subscribeToRoomMessages failed:', err);
  }
  }
+
  const handleBroadcast = (e: MessageEvent) => {
  if (e.data?.type === 'MESSAGES_UPDATED') {
  notifyLocal();
@@ -311,31 +302,26 @@ export class FirebaseChatService {
  notifyLocal();
  }
  };
+
  broadcastChannel?.addEventListener('message', handleBroadcast);
  window.addEventListener('storage', handleStorage);
+
  return () => {
  if (unsubscribeFirebase) unsubscribeFirebase();
  broadcastChannel?.removeEventListener('message', handleBroadcast);
  window.removeEventListener('storage', handleStorage);
  };
  }
- /**
- * Get direct stored messages for a specific room immediately
- */
+
  public static getRoomMessagesDirect(roomId: string): ChatMessage[] {
  const allMsgs = getStoredMessages();
  return (allMsgs[roomId] || []).sort((a, b) => a.timestamp - b.timestamp);
  }
- /**
- * Get direct stored messages for two users
- */
+
  public static getMessagesForUsers(userId1: string, userId2: string): ChatMessage[] {
  const roomId = this.getRoomId(userId1, userId2);
  return this.getRoomMessagesDirect(roomId);
  }
- /**
- * Send a Realtime Chat Message
- */
  public static async sendMessage(
  roomId: string,
  sender: UserProfile,
@@ -359,12 +345,11 @@ export class FirebaseChatService {
  mediaUrl,
  isPopularityGift,
  };
- // Update Firebase RTDB
+
  if (db) {
  try {
  const msgRef = ref(db, `messages/${roomId}/${msgId}`);
  await set(msgRef, newMsg);
- // Update Room last message and increment receiver's unread
  const roomRef = ref(db, `chatRooms/${roomId}`);
  const roomSnap = await get(roomRef);
  const currentUnread = roomSnap.exists()
@@ -379,11 +364,12 @@ export class FirebaseChatService {
  console.warn('Firebase RTDB sendMessage error:', err);
  }
  }
- // Local Storage & Multi-tab broadcast update
+
  const allMsgs = getStoredMessages();
  if (!allMsgs[roomId]) allMsgs[roomId] = [];
  allMsgs[roomId].push(newMsg);
  saveStoredMessages(allMsgs);
+
  const rooms = getStoredRooms();
  if (rooms[roomId]) {
  rooms[roomId].lastMessage = newMsg;
@@ -394,18 +380,14 @@ export class FirebaseChatService {
  }
  return newMsg;
  }
- /**
- * Mark all unread messages in a room as read for a given user
- */
+
  public static async markRoomAsRead(roomId: string, userId: string): Promise<void> {
- // Firebase RTDB update
  if (db) {
  try {
  const roomRef = ref(db, `chatRooms/${roomId}`);
  await update(roomRef, {
  [`unreadCounts/${userId}`]: 0,
  });
- // Mark incoming messages as read
  const msgsRef = ref(db, `messages/${roomId}`);
  const snapshot = await get(msgsRef);
  if (snapshot.exists()) {
@@ -424,13 +406,14 @@ export class FirebaseChatService {
  console.warn('Firebase RTDB markRoomAsRead error:', err);
  }
  }
- // Local Storage update
+
  const rooms = getStoredRooms();
  if (rooms[roomId]) {
  if (!rooms[roomId].unreadCounts) rooms[roomId].unreadCounts = {};
  rooms[roomId].unreadCounts[userId] = 0;
  saveStoredRooms(rooms);
  }
+
  const allMsgs = getStoredMessages();
  if (allMsgs[roomId]) {
  allMsgs[roomId].forEach((m) => {
@@ -441,9 +424,7 @@ export class FirebaseChatService {
  saveStoredMessages(allMsgs);
  }
  }
- /**
- * Realtime Typing Indicator
- */
+
  public static async setTyping(roomId: string, userId: string, isTyping: boolean): Promise<void> {
  if (db) {
  try {
@@ -451,7 +432,7 @@ export class FirebaseChatService {
  await set(typingRef, isTyping ? Date.now() : null);
  } catch {}
  }
- // Local typing update
+
  try {
  const raw = localStorage.getItem(LOCAL_TYPING_KEY);
  const typingMap: Record<string, Record<string, number>> = raw ? JSON.parse(raw) : {};
@@ -465,9 +446,7 @@ export class FirebaseChatService {
  broadcastChannel?.postMessage({ type: 'TYPING_UPDATED', roomId, userId, isTyping });
  } catch {}
  }
- /**
- * Subscribe to other user's typing status in a room
- */
+
  public static subscribeToTyping(
  roomId: string,
  currentUserId: string,
@@ -487,6 +466,7 @@ export class FirebaseChatService {
  callback(false);
  }
  };
+
  if (db) {
  try {
  const typingRef = ref(db, `typing/${roomId}`);
@@ -506,18 +486,20 @@ export class FirebaseChatService {
  };
  } catch {}
  }
+
  const handleBroadcast = (e: MessageEvent) => {
  if (e.data?.type === 'TYPING_UPDATED' && e.data?.roomId === roomId) {
  checkLocalTyping();
  }
  };
  broadcastChannel?.addEventListener('message', handleBroadcast);
+
  return () => {
  if (unsubscribeFirebase) unsubscribeFirebase();
  broadcastChannel?.removeEventListener('message', handleBroadcast);
  };
  }
- 
+
  public static async toggleReaction(
  roomId: string,
  messageId: string,
@@ -550,9 +532,7 @@ export class FirebaseChatService {
  }
  }
  }
- /**
- * 72시간(3일) 초과 대화 만료 삭제 및 양측 읽음 완료 대화 로컬 브라우저 저장 최적화
- */
+
  public static readonly MESSAGE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
  public static purgeExpiredAndOptimizeMessages(): { purgedCount: number; activeRooms: number } {
  const now = Date.now();
@@ -577,9 +557,7 @@ export class FirebaseChatService {
  }
  return { purgedCount, activeRooms: roomKeys.length };
  }
- /**
- * Calculate total unread count for current user
- */
+
  public static calculateTotalUnread(rooms: ChatRoom[], currentUserId: string): number {
  return rooms.reduce((acc, room) => {
  return acc + (room.unreadCounts?.[currentUserId] || 0);
