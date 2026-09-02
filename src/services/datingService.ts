@@ -510,6 +510,34 @@ export class DatingService {
 
     // Sync to Server API and Cloud Firestore
     ApiSyncService.saveUser(user).catch(() => {});
+    if (isFirebaseConfigured()) {
+      FirestoreSyncService.saveUser(user).catch(() => {});
+    }
+  }
+
+  /**
+   * Bulk update internal users dataset from real-time Firestore stream
+   */
+  public static updateInternalUsersData(cloudUsers: UserProfile[]): void {
+    if (!cloudUsers || cloudUsers.length === 0) return;
+    const localUsers = this.getAllUsers();
+    const userMap = new Map<string, UserProfile>();
+
+    for (const u of localUsers) {
+      if (u && u.id) userMap.set(u.id, u);
+    }
+    for (const cu of cloudUsers) {
+      if (cu && cu.id) {
+        const existing = userMap.get(cu.id);
+        const merged: UserProfile = {
+          ...(existing || {}),
+          ...cu,
+          location: cu.latitude && cu.longitude ? { latitude: cu.latitude, longitude: cu.longitude } : (cu.location || existing?.location),
+        } as UserProfile;
+        userMap.set(cu.id, merged);
+      }
+    }
+    localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(Array.from(userMap.values())));
   }
 
   /**

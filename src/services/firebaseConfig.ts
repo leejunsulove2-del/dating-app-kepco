@@ -14,19 +14,24 @@ export interface FirebaseProjectConfig {
 }
 
 export function getStoredFirebaseConfig(): FirebaseProjectConfig | null {
-  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
-  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
-  const appId = import.meta.env.VITE_FIREBASE_APP_ID;
+  const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
+  const apiKey = env.VITE_FIREBASE_API_KEY;
+  const projectId = env.VITE_FIREBASE_PROJECT_ID;
+  const appId = env.VITE_FIREBASE_APP_ID;
+  const authDomain = env.VITE_FIREBASE_AUTH_DOMAIN || (projectId ? `${projectId}.firebaseapp.com` : undefined);
+  const storageBucket = env.VITE_FIREBASE_STORAGE_BUCKET || (projectId ? `${projectId}.appspot.com` : undefined);
+  const messagingSenderId = env.VITE_FIREBASE_MESSAGING_SENDER_ID;
+  const databaseURL = env.VITE_FIREBASE_DATABASE_URL || (projectId ? `https://${projectId}-default-rtdb.firebaseio.com` : undefined);
 
   if (apiKey && projectId) {
     return {
-      apiKey: apiKey,
-      authDomain: `${projectId}.firebaseapp.com`,
-      projectId: projectId,
-      storageBucket: `${projectId}.appspot.com`,
+      apiKey,
+      authDomain: authDomain || `${projectId}.firebaseapp.com`,
+      projectId,
+      storageBucket: storageBucket || `${projectId}.appspot.com`,
       appId: appId || '',
-      // 가입 요청 데이터가 쌓이는 리얼타임 DB 연결 주소 오타를 올바르게 수정했습니다.
-      databaseURL: `https://${projectId}-default-rtdb.firebaseio.com`
+      messagingSenderId,
+      databaseURL
     };
   }
   return null;

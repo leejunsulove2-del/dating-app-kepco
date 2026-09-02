@@ -126,6 +126,39 @@ export class FirestoreSyncService {
     }
   }
 
+  public static async deleteUser(userId: string): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !userId) return false;
+    try {
+      await deleteDoc(doc(db, 'users', userId));
+      return true;
+    } catch (error) {
+      console.warn(`[FirestoreSync] Failed to delete user ${userId}:`, error);
+      return false;
+    }
+  }
+
+  public static async seedUsersToFirestore(users: UserProfile[]): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !users || users.length === 0) return false;
+    try {
+      const batch = writeBatch(db);
+      for (const u of users) {
+        if (u && u.id) {
+          const userRef = doc(db, 'users', u.id);
+          const cleanData = JSON.parse(JSON.stringify(u));
+          cleanData.updatedAt = Date.now();
+          batch.set(userRef, cleanData, { merge: true });
+        }
+      }
+      await batch.commit();
+      return true;
+    } catch (error) {
+      console.warn('[FirestoreSync] Failed to seed users to Firestore:', error);
+      return false;
+    }
+  }
+
   public static async getUser(userId: string): Promise<UserProfile | null> {
     const db = this.getDb();
     if (!db || !userId) return null;
@@ -161,6 +194,22 @@ export class FirestoreSyncService {
     }
   }
 
+  public static subscribeToUsers(callback: (users: UserProfile[]) => void): () => void {
+    const db = this.getDb();
+    if (!db) return () => {};
+
+    const usersRef = collection(db, 'users');
+    return onSnapshot(usersRef, (snapshot) => {
+      const users: UserProfile[] = [];
+      snapshot.forEach((doc) => {
+        users.push({ ...doc.data(), id: doc.id } as UserProfile);
+      });
+      callback(users);
+    }, (error) => {
+      console.warn('[FirestoreSync] Users listener error:', error);
+    });
+  }
+
   public static startUsersListener(callback: (users: UserProfile[]) => void): void {
     const db = this.getDb();
     if (!db) return;
@@ -192,12 +241,18 @@ export class FirestoreSyncService {
   // // 2. LIKES & MATCHES (Interaction state sync)
   // =========================================================================
 
+  public static async saveLikeAction(action: LikeAction): Promise<boolean> {
+    return this.registerLikeAction(action);
+  }
+
   public static async registerLikeAction(action: LikeAction): Promise<boolean> {
     const db = this.getDb();
-    if (!db || !action.fromId || !action.toId) return false;
+    const fromId = action.fromUserId;
+    const toId = action.toUserId;
+    if (!db || !fromId || !toId) return false;
 
     try {
-      const actionId = `${action.fromId}_${action.toId}`;
+      const actionId = `${fromId}_${toId}`;
       const actionRef = doc(db, 'likes', actionId);
       const cleanData = JSON.parse(JSON.stringify(action));
       cleanData.timestamp = Date.now();
@@ -208,6 +263,7 @@ export class FirestoreSyncService {
       return false;
     }
   }
+
   public static async checkMatch(userIdA: string, userIdB: string): Promise<boolean> {
     const db = this.getDb();
     if (!db || !userIdA || !userIdB) return false;
@@ -220,9 +276,7 @@ export class FirestoreSyncService {
       const backwardDoc = await getDoc(doc(db, 'likes', backwardId));
 
       if (forwardDoc.exists() && backwardDoc.exists()) {
-        const fData = forwardDoc.data();
-        const bData = backwardDoc.data();
-        return fData.type === 'like' && bData.type === 'like';
+        return true;
       }
       return false;
     } catch (error) {
@@ -285,6 +339,36 @@ export class FirestoreSyncService {
     }
   }
 
+  public static async getAllAdminAccounts(): Promise<AdminAccount[]> {
+    const db = this.getDb();
+    if (!db) return [];
+
+    try {
+      const adminsRef = collection(db, 'admins');
+      const snapshot = await getDocs(adminsRef);
+      const admins: AdminAccount[] = [];
+      snapshot.forEach((d) => {
+        admins.push({ ...d.data(), id: d.id } as AdminAccount);
+      });
+      return admins;
+    } catch (error) {
+      console.warn('[FirestoreSync] Failed to get all admin accounts:', error);
+      return [];
+    }
+  }
+
+  public static async deleteAdminAccount(adminId: string): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !adminId) return false;
+    try {
+      await deleteDoc(doc(db, 'admins', adminId));
+      return true;
+    } catch (error) {
+      console.warn(`[FirestoreSync] Failed to delete admin account ${adminId}:`, error);
+      return false;
+    }
+  }
+
   public static async saveAdminAccount(admin: AdminAccount): Promise<boolean> {
     const db = this.getDb();
     if (!db || !admin || !admin.id) return false;
@@ -300,6 +384,23 @@ export class FirestoreSyncService {
       return false;
     }
   }
+
+  public static subscribeToAdminAccounts(callback: (admins: AdminAccount[]) => void): () => void {
+    const db = this.getDb();
+    if (!db) return () => {};
+
+    const adminsRef = collection(db, 'admins');
+    return onSnapshot(adminsRef, (snapshot) => {
+      const admins: AdminAccount[] = [];
+      snapshot.forEach((d) => {
+        admins.push({ ...d.data(), id: d.id } as AdminAccount);
+      });
+      callback(admins);
+    }, (error) => {
+      console.warn('[FirestoreSync] Admins listener error:', error);
+    });
+  }
+
   public static startAdminListener(callback: (admins: AdminAccount[]) => void): void {
     const db = this.getDb();
     if (!db) return;
@@ -325,6 +426,10 @@ export class FirestoreSyncService {
       this.adminUnsubscribe();
       this.adminUnsubscribe = null;
     }
+  }
+
+  public static async saveAdminLog(entry: AdminLogEntry): Promise<boolean> {
+    return this.logAdminActivity(entry);
   }
 
   public static async logAdminActivity(entry: AdminLogEntry): Promise<boolean> {
@@ -408,6 +513,23 @@ export class FirestoreSyncService {
       console.warn(`[FirestoreSync] Failed to delete board post ${postId}:`, error);
       return false;
     }
+  }
+
+  public static subscribeToBoardPosts(callback: (posts: AdminBoardPost[]) => void): () => void {
+    const db = this.getDb();
+    if (!db) return () => {};
+
+    const boardRef = collection(db, 'board_posts');
+    return onSnapshot(boardRef, (snapshot) => {
+      const posts: AdminBoardPost[] = [];
+      snapshot.forEach((d) => {
+        posts.push({ ...d.data(), id: d.id } as AdminBoardPost);
+      });
+      posts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      callback(posts);
+    }, (error) => {
+      console.warn('[FirestoreSync] Board listener error:', error);
+    });
   }
 
   public static startBoardListener(callback: (posts: AdminBoardPost[]) => void): void {

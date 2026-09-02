@@ -10,6 +10,8 @@ interface ServerDatabase {
   adminLogs: any[];
   userInventories: Record<string, any>;
   likes: any[];
+  reports: any[];
+  userPasswords: Record<string, string>;
   chatMessages: Record<string, any[]>;
   firebaseConfig: any | null;
   lastUpdated: number;
@@ -30,6 +32,8 @@ function loadDatabase(): ServerDatabase {
         adminLogs: parsed.adminLogs || [],
         userInventories: parsed.userInventories || {},
         likes: parsed.likes || [],
+        reports: parsed.reports || [],
+        userPasswords: parsed.userPasswords || {},
         chatMessages: parsed.chatMessages || {},
         firebaseConfig: parsed.firebaseConfig || null,
         lastUpdated: parsed.lastUpdated || Date.now(),
@@ -46,6 +50,8 @@ function loadDatabase(): ServerDatabase {
     adminLogs: [],
     userInventories: {},
     likes: [],
+    reports: [],
+    userPasswords: {},
     chatMessages: {},
     firebaseConfig: null,
     lastUpdated: Date.now(),
@@ -74,9 +80,11 @@ async function startServer() {
   // =========================================================================
 
   app.get('/api/health', (req, res) => {
+    const pendingCount = db.users.filter((u) => u.approvalStatus === 'pending').length;
     res.json({
       status: 'ok',
       usersCount: db.users.length,
+      pendingUsersCount: pendingCount,
       adminsCount: db.adminAccounts.length,
       lastUpdated: db.lastUpdated,
       firebaseConfigured: Boolean(db.firebaseConfig && db.firebaseConfig.projectId),
@@ -92,6 +100,8 @@ async function startServer() {
       adminLogs: db.adminLogs,
       userInventories: db.userInventories,
       likes: db.likes,
+      reports: db.reports,
+      userPasswords: db.userPasswords,
       firebaseConfig: db.firebaseConfig,
       lastUpdated: db.lastUpdated,
     });
@@ -100,6 +110,73 @@ async function startServer() {
   // 2. Users Management
   app.get('/api/sync/users', (req, res) => {
     res.json(db.users);
+  });
+
+  app.get('/api/sync/pending-users', (req, res) => {
+    const pending = db.users.filter((u) => u.approvalStatus === 'pending');
+    res.json(pending);
+  });
+
+  // Dedicated Register Endpoint
+  app.post('/api/sync/register', (req, res) => {
+    const { user, passwordPlain } = req.body;
+    if (!user || !user.id || !user.email) {
+      return res.status(400).json({ error: 'Valid user object required' });
+    }
+
+    const cleanEmail = user.email.toLowerCase().trim();
+    if (passwordPlain) {
+      db.userPasswords[cleanEmail] = passwordPlain;
+    }
+
+    const idx = db.users.findIndex((u) => u.id === user.id || u.email?.toLowerCase() === cleanEmail);
+    if (idx >= 0) {
+      db.users[idx] = { ...db.users[idx], ...user, updatedAt: Date.now() };
+    } else {
+      db.users.push({ ...user, updatedAt: Date.now() });
+    }
+
+    saveDatabase();
+    console.log(`[Server DB] New registration received: ${user.name} (${user.email}) - Agency: ${user.company || user.agencyDomain}`);
+    res.json({ success: true, user: db.users.find((u) => u.id === user.id) });
+  });
+
+  // Dedicated Approve User Endpoint
+  app.post('/api/sync/approve-user', (req, res) => {
+    const { userId, adminEmail, adminName } = req.body;
+    const target = db.users.find((u) => u.id === userId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    target.approvalStatus = 'approved';
+    target.approvedAt = Date.now();
+    target.approvedByAdmin = `${adminName} (${adminEmail})`;
+    target.verifiedEmail = true;
+    target.updatedAt = Date.now();
+
+    saveDatabase();
+    console.log(`[Server DB] User approved: ${target.name} (${target.email}) by ${adminName}`);
+    res.json({ success: true, user: target });
+  });
+
+  // Dedicated Reject User Endpoint
+  app.post('/api/sync/reject-user', (req, res) => {
+    const { userId, reason, adminName } = req.body;
+    const target = db.users.find((u) => u.id === userId);
+    if (!target) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    target.approvalStatus = 'rejected';
+    target.rejectionReason = reason;
+    target.rejectedAt = Date.now();
+    target.rejectedByAdmin = adminName;
+    target.updatedAt = Date.now();
+
+    saveDatabase();
+    console.log(`[Server DB] User rejected: ${target.name} (${target.email}) - Reason: ${reason}`);
+    res.json({ success: true, user: target });
   });
 
   app.post('/api/sync/users', (req, res) => {
@@ -232,7 +309,57 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 6. User Inventory
+  // 6. Reports Management
+  app.get('/api/sync/reports', (req, res) => {
+    res.json(db.reports);
+  });
+
+  app.post('/api/sync/reports', (req, res) => {
+    const { reports } = req.body;
+    if (Array.isArray(reports)) {
+      const repMap = new Map<string, any>();
+      for (const r of db.reports) {
+        if (r && r.id) repMap.set(r.id, r);
+      }
+      for (const r of reports) {
+        if (r && r.id) repMap.set(r.id, r);
+      }
+      db.reports = Array.from(repMap.values());
+      saveDatabase();
+      return res.json({ success: true });
+    }
+    res.status(400).json({ error: 'reports array required' });
+  });
+
+  app.post('/api/sync/report', (req, res) => {
+    const report = req.body;
+    if (report && report.id) {
+      const idx = db.reports.findIndex((r) => r.id === report.id);
+      if (idx >= 0) {
+        db.reports[idx] = report;
+      } else {
+        db.reports.unshift(report);
+      }
+      saveDatabase();
+    }
+    res.json({ success: true });
+  });
+
+  // 7. User Passwords Management
+  app.get('/api/sync/passwords', (req, res) => {
+    res.json(db.userPasswords);
+  });
+
+  app.post('/api/sync/passwords', (req, res) => {
+    const { passwords } = req.body;
+    if (passwords && typeof passwords === 'object') {
+      db.userPasswords = { ...db.userPasswords, ...passwords };
+      saveDatabase();
+    }
+    res.json({ success: true });
+  });
+
+  // 8. User Inventory
   app.get('/api/sync/inventory/:userId', (req, res) => {
     const { userId } = req.params;
     res.json(db.userInventories[userId] || null);
@@ -248,7 +375,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 7. Likes & Matches
+  // 9. Likes & Matches
   app.get('/api/sync/likes', (req, res) => {
     res.json(db.likes);
   });
@@ -267,7 +394,7 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  // 8. Firebase Project Configuration
+  // 10. Firebase Project Configuration
   app.get('/api/sync/firebase-config', (req, res) => {
     res.json({
       config: db.firebaseConfig || null,

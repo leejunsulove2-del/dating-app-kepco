@@ -52,6 +52,8 @@ export interface UserProfile {
   bio: string; // 자기소개
   interests: string[]; // 관심사 태그
   location?: UserLocation;
+  latitude?: number;
+  longitude?: number;
   isOnline: boolean;
   distanceKm?: number;
   verifiedEmail: boolean;

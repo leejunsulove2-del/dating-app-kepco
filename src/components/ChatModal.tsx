@@ -247,8 +247,9 @@ export const ChatModal: React.FC<ChatModalProps> = ({
         return [...prev, newMsg];
       });
 
-      // Interactive simulation reply for demo accounts
-      if (targetUser.id.startsWith('user_')) {
+      // Interactive simulation reply only for mock demo accounts (user_1 ~ user_16)
+      const isMockAccount = targetUser.isTestAccount || /^user_\d+$/.test(targetUser.id);
+      if (isMockAccount) {
         const isFirst = messages.filter((m) => m.senderId === currentUser.id).length === 0;
 
         setTimeout(() => {

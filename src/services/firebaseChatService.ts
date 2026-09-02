@@ -1,50 +1,20 @@
-import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
-  getDatabase,
-  ref,
-  set,
-  push,
-  onValue,
-  off,
-  update,
-  get,
-  Database
-} from 'firebase/database';
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  updateDoc,
+  limit,
+  deleteDoc,
+  Unsubscribe,
+} from 'firebase/firestore';
+import { initFirebaseApp } from './firebaseConfig';
 import { UserProfile, ChatRoom, ChatMessage } from '../types';
-
-// Environment variables or fallback config for Firebase
-const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
-const hasRealFirebaseConfig = Boolean(
-  env.VITE_FIREBASE_API_KEY &&
-  env.VITE_FIREBASE_DATABASE_URL &&
-  !env.VITE_FIREBASE_DATABASE_URL.includes('default-rtdb.firebaseio.com') &&
-  !env.VITE_FIREBASE_API_KEY.includes('AIzaSyDemoKey')
-);
-
-let app: FirebaseApp | null = null;
-let db: Database | null = null;
-
-if (hasRealFirebaseConfig) {
-  try {
-    if (getApps().length === 0) {
-      app = initializeApp({
-        apiKey: env.VITE_FIREBASE_API_KEY,
-        authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
-        databaseURL: env.VITE_FIREBASE_DATABASE_URL,
-        projectId: env.VITE_FIREBASE_PROJECT_ID,
-        storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET,
-        messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-        appId: env.VITE_FIREBASE_APP_ID,
-      });
-    } else {
-      app = getApp();
-    }
-    db = getDatabase(app);
-  } catch (err) {
-    console.warn('Firebase Realtime Database init info:', err);
-    db = null;
-  }
-}
 
 // Local Storage Fallback & Multi-Tab Broadcast synchronization
 const LOCAL_ROOMS_KEY = 'love_app_rtdb_rooms';
@@ -100,33 +70,53 @@ export class FirebaseChatService {
     return `room_${sorted[0]}_${sorted[1]}`;
   }
 
+  private static getDb() {
+    const { db } = initFirebaseApp();
+    return db;
+  }
+
   /**
    * Create or retrieve a ChatRoom between two matched users
    */
   public static async createOrGetRoom(user1: UserProfile, user2: UserProfile): Promise<ChatRoom> {
     const roomId = this.getRoomId(user1.id, user2.id);
+    const db = this.getDb();
 
-    // Try Firebase RTDB first
+    // 1. Try Firestore
     if (db) {
       try {
-        const roomRef = ref(db, `chatRooms/${roomId}`);
-        const snapshot = await get(roomRef);
+        const roomRef = doc(db, 'chat_rooms', roomId);
+        const snapshot = await getDoc(roomRef);
+
         if (snapshot.exists()) {
-          const room = snapshot.val() as ChatRoom;
-          // Ensure participant profiles are fresh
-          room.participantProfiles = {
+          const roomData = snapshot.data() as ChatRoom;
+          // Refresh participant profiles
+          const updatedProfiles = {
+            ...(roomData.participantProfiles || {}),
             [user1.id]: user1,
             [user2.id]: user2,
           };
-          await update(roomRef, { participantProfiles: room.participantProfiles });
-          return room;
+          await updateDoc(roomRef, { participantProfiles: updatedProfiles, updatedAt: Date.now() });
+          
+          const freshRoom: ChatRoom = {
+            ...roomData,
+            id: roomId,
+            participantProfiles: updatedProfiles,
+          };
+
+          // Cache locally
+          const rooms = getStoredRooms();
+          rooms[roomId] = freshRoom;
+          saveStoredRooms(rooms);
+
+          return freshRoom;
         }
       } catch (err) {
-        console.warn('Firebase RTDB get room error, fallback to local storage:', err);
+        console.warn('[FirebaseChat] Firestore get room error:', err);
       }
     }
 
-    // Check Local Storage
+    // 2. Check Local Storage
     const rooms = getStoredRooms();
     if (rooms[roomId]) {
       rooms[roomId].participantProfiles = {
@@ -137,7 +127,7 @@ export class FirebaseChatService {
       return rooms[roomId];
     }
 
-    // Create Initial System Welcome Message
+    // 3. Create Initial Welcome Message & Room
     const welcomeMsg: ChatMessage = {
       id: `msg_sys_${Date.now()}`,
       roomId,
@@ -146,7 +136,7 @@ export class FirebaseChatService {
       text: `🎉 ${user1.name}님과 ${user2.name}님이 매칭되었습니다! 편하게 첫 인사를 건네보세요.`,
       timestamp: Date.now(),
       read: true,
-      type: 'system'
+      type: 'system',
     };
 
     const newRoom: ChatRoom = {
@@ -166,13 +156,16 @@ export class FirebaseChatService {
       isMatched: true,
     };
 
-    // Save to Firebase RTDB
+    // Save to Firestore
     if (db) {
       try {
-        await set(ref(db, `chatRooms/${roomId}`), newRoom);
-        await set(ref(db, `messages/${roomId}/${welcomeMsg.id}`), welcomeMsg);
+        const cleanRoom = JSON.parse(JSON.stringify(newRoom));
+        await setDoc(doc(db, 'chat_rooms', roomId), cleanRoom, { merge: true });
+        
+        const cleanMsg = JSON.parse(JSON.stringify(welcomeMsg));
+        await setDoc(doc(db, 'chat_rooms', roomId, 'messages', welcomeMsg.id), cleanMsg);
       } catch (err) {
-        console.warn('Firebase RTDB create room failed, using local storage:', err);
+        console.warn('[FirebaseChat] Firestore create room failed:', err);
       }
     }
 
@@ -205,46 +198,45 @@ export class FirebaseChatService {
     // Initial local read
     notifyLocal();
 
-    let unsubscribeFirebase: (() => void) | null = null;
+    let unsubscribeFirestore: Unsubscribe | null = null;
+    const db = this.getDb();
 
     if (db) {
       try {
-        const roomsRef = ref(db, 'chatRooms');
-        const listener = onValue(
+        const roomsRef = collection(db, 'chat_rooms');
+        // Realtime Firestore Listener
+        unsubscribeFirestore = onSnapshot(
           roomsRef,
           (snapshot) => {
-            if (snapshot.exists()) {
-              const val = snapshot.val();
-              const roomsList: ChatRoom[] = Object.values(val);
-              const userRooms = roomsList
-                .filter((r) => r && r.participantIds && r.participantIds.includes(userId))
-                .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+            const roomsList: ChatRoom[] = [];
+            const local = getStoredRooms();
 
-              // Merge into local storage for caching
-              const local = getStoredRooms();
-              roomsList.forEach((r) => {
-                if (r && r.id) local[r.id] = r;
-              });
-              try {
-                localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(local));
-              } catch {}
+            snapshot.forEach((docSnap) => {
+              const r = docSnap.data() as ChatRoom;
+              r.id = docSnap.id;
+              if (r.participantIds && r.participantIds.includes(userId)) {
+                roomsList.push(r);
+              }
+              local[docSnap.id] = r;
+            });
 
-              callback(userRooms);
-            } else {
-              notifyLocal();
-            }
+            // Sort by latest update
+            roomsList.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+
+            // Sync to local storage
+            try {
+              localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(local));
+            } catch {}
+
+            callback(roomsList);
           },
           (error) => {
-            console.warn('Firebase RTDB rooms listener error:', error);
+            console.warn('[FirebaseChat] Firestore rooms listener error:', error);
             notifyLocal();
           }
         );
-
-        unsubscribeFirebase = () => {
-          off(roomsRef, 'value', listener);
-        };
       } catch (err) {
-        console.warn('Firebase RTDB subscribeToUserRooms failed:', err);
+        console.warn('[FirebaseChat] Firestore subscribeToUserRooms failed:', err);
       }
     }
 
@@ -265,7 +257,7 @@ export class FirebaseChatService {
     window.addEventListener('storage', handleStorage);
 
     return () => {
-      if (unsubscribeFirebase) unsubscribeFirebase();
+      if (unsubscribeFirestore) unsubscribeFirestore();
       broadcastChannel?.removeEventListener('message', handleBroadcast);
       window.removeEventListener('storage', handleStorage);
     };
@@ -287,42 +279,41 @@ export class FirebaseChatService {
     // Initial local notify
     notifyLocal();
 
-    let unsubscribeFirebase: (() => void) | null = null;
+    let unsubscribeFirestore: Unsubscribe | null = null;
+    const db = this.getDb();
 
-    if (db) {
+    if (db && roomId) {
       try {
-        const msgsRef = ref(db, `messages/${roomId}`);
-        const listener = onValue(
+        const msgsRef = collection(db, 'chat_rooms', roomId, 'messages');
+        
+        unsubscribeFirestore = onSnapshot(
           msgsRef,
           (snapshot) => {
-            if (snapshot.exists()) {
-              const val = snapshot.val();
-              const msgList: ChatMessage[] = Object.values(val);
-              msgList.sort((a, b) => a.timestamp - b.timestamp);
+            const msgList: ChatMessage[] = [];
+            snapshot.forEach((docSnap) => {
+              const m = docSnap.data() as ChatMessage;
+              m.id = docSnap.id;
+              msgList.push(m);
+            });
 
-              // Cache locally
-              const allLocal = getStoredMessages();
-              allLocal[roomId] = msgList;
-              try {
-                localStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(allLocal));
-              } catch {}
+            msgList.sort((a, b) => a.timestamp - b.timestamp);
 
-              callback(msgList);
-            } else {
-              notifyLocal();
-            }
+            // Cache locally
+            const allLocal = getStoredMessages();
+            allLocal[roomId] = msgList;
+            try {
+              localStorage.setItem(LOCAL_MESSAGES_KEY, JSON.stringify(allLocal));
+            } catch {}
+
+            callback(msgList);
           },
           (error) => {
-            console.warn('Firebase RTDB messages listener error:', error);
+            console.warn('[FirebaseChat] Firestore messages listener error:', error);
             notifyLocal();
           }
         );
-
-        unsubscribeFirebase = () => {
-          off(msgsRef, 'value', listener);
-        };
       } catch (err) {
-        console.warn('Firebase RTDB subscribeToRoomMessages failed:', err);
+        console.warn('[FirebaseChat] Firestore subscribeToRoomMessages failed:', err);
       }
     }
 
@@ -342,7 +333,7 @@ export class FirebaseChatService {
     window.addEventListener('storage', handleStorage);
 
     return () => {
-      if (unsubscribeFirebase) unsubscribeFirebase();
+      if (unsubscribeFirestore) unsubscribeFirestore();
       broadcastChannel?.removeEventListener('message', handleBroadcast);
       window.removeEventListener('storage', handleStorage);
     };
@@ -365,7 +356,7 @@ export class FirebaseChatService {
   }
 
   /**
-   * Send a Realtime Chat Message
+   * Send a Realtime Chat Message (Direct Firestore Sync)
    */
   public static async sendMessage(
     roomId: string,
@@ -392,31 +383,46 @@ export class FirebaseChatService {
       isPopularityGift,
     };
 
+    const db = this.getDb();
 
-    // Update Firebase RTDB
+    // 1. Update Firestore
     if (db) {
       try {
-        const msgRef = ref(db, `messages/${roomId}/${msgId}`);
-        await set(msgRef, newMsg);
+        const cleanMsg = JSON.parse(JSON.stringify(newMsg));
+        // Save message in subcollection
+        await setDoc(doc(db, 'chat_rooms', roomId, 'messages', msgId), cleanMsg);
 
-        // Update Room last message and increment receiver's unread
-        const roomRef = ref(db, `chatRooms/${roomId}`);
-        const roomSnap = await get(roomRef);
+        // Update Room last message and receiver unread count
+        const roomRef = doc(db, 'chat_rooms', roomId);
+        const roomSnap = await getDoc(roomRef);
         const currentUnread = roomSnap.exists()
-          ? (roomSnap.val().unreadCounts?.[receiver.id] || 0) + 1
+          ? (roomSnap.data()?.unreadCounts?.[receiver.id] || 0) + 1
           : 1;
 
-        await update(roomRef, {
-          lastMessage: newMsg,
-          updatedAt: timestamp,
-          [`unreadCounts/${receiver.id}`]: currentUnread,
-        });
+        await setDoc(
+          roomRef,
+          {
+            id: roomId,
+            participantIds: [sender.id, receiver.id],
+            participantProfiles: {
+              [sender.id]: sender,
+              [receiver.id]: receiver,
+            },
+            lastMessage: cleanMsg,
+            updatedAt: timestamp,
+            unreadCounts: {
+              [receiver.id]: currentUnread,
+              [sender.id]: 0,
+            },
+          },
+          { merge: true }
+        );
       } catch (err) {
-        console.warn('Firebase RTDB sendMessage error:', err);
+        console.warn('[FirebaseChat] Firestore sendMessage error:', err);
       }
     }
 
-    // Local Storage & Multi-tab broadcast update
+    // 2. Local Storage & Multi-tab broadcast update
     const allMsgs = getStoredMessages();
     if (!allMsgs[roomId]) allMsgs[roomId] = [];
     allMsgs[roomId].push(newMsg);
@@ -438,35 +444,30 @@ export class FirebaseChatService {
    * Mark all unread messages in a room as read for a given user
    */
   public static async markRoomAsRead(roomId: string, userId: string): Promise<void> {
-    // Firebase RTDB update
-    if (db) {
-      try {
-        const roomRef = ref(db, `chatRooms/${roomId}`);
-        await update(roomRef, {
-          [`unreadCounts/${userId}`]: 0,
-        });
+    const db = this.getDb();
 
-        // Mark incoming messages as read
-        const msgsRef = ref(db, `messages/${roomId}`);
-        const snapshot = await get(msgsRef);
-        if (snapshot.exists()) {
-          const msgs = snapshot.val();
-          const updates: Record<string, boolean> = {};
-          Object.keys(msgs).forEach((mId) => {
-            if (msgs[mId].receiverId === userId && !msgs[mId].read) {
-              updates[`${mId}/read`] = true;
-            }
-          });
-          if (Object.keys(updates).length > 0) {
-            await update(msgsRef, updates);
-          }
-        }
+    // 1. Firestore update
+    if (db && roomId) {
+      try {
+        const roomRef = doc(db, 'chat_rooms', roomId);
+        await updateDoc(roomRef, {
+          [`unreadCounts.${userId}`]: 0,
+        }).catch(() => {});
+
+        // Mark incoming messages as read in subcollection
+        const msgsRef = collection(db, 'chat_rooms', roomId, 'messages');
+        const unreadQuery = query(msgsRef, where('receiverId', '==', userId), where('read', '==', false));
+        const unreadDocs = await getDocs(unreadQuery);
+
+        unreadDocs.forEach((d) => {
+          updateDoc(d.ref, { read: true }).catch(() => {});
+        });
       } catch (err) {
-        console.warn('Firebase RTDB markRoomAsRead error:', err);
+        console.warn('[FirebaseChat] Firestore markRoomAsRead error:', err);
       }
     }
 
-    // Local Storage update
+    // 2. Local Storage update
     const rooms = getStoredRooms();
     if (rooms[roomId]) {
       if (!rooms[roomId].unreadCounts) rooms[roomId].unreadCounts = {};
@@ -489,10 +490,15 @@ export class FirebaseChatService {
    * Realtime Typing Indicator
    */
   public static async setTyping(roomId: string, userId: string, isTyping: boolean): Promise<void> {
-    if (db) {
+    const db = this.getDb();
+    if (db && roomId) {
       try {
-        const typingRef = ref(db, `typing/${roomId}/${userId}`);
-        await set(typingRef, isTyping ? Date.now() : null);
+        const typingRef = doc(db, 'chat_rooms', roomId, 'typing', userId);
+        if (isTyping) {
+          await setDoc(typingRef, { timestamp: Date.now(), userId });
+        } else {
+          await deleteDoc(typingRef).catch(() => {});
+        }
       } catch {}
     }
 
@@ -521,7 +527,8 @@ export class FirebaseChatService {
     currentUserId: string,
     callback: (isPartnerTyping: boolean) => void
   ): () => void {
-    let unsubscribeFirebase: (() => void) | null = null;
+    let unsubscribeFirestore: Unsubscribe | null = null;
+    const db = this.getDb();
 
     const checkLocalTyping = () => {
       try {
@@ -538,24 +545,24 @@ export class FirebaseChatService {
       }
     };
 
-    if (db) {
+    if (db && roomId) {
       try {
-        const typingRef = ref(db, `typing/${roomId}`);
-        const listener = onValue(typingRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const val = snapshot.val() as Record<string, number>;
-            const partnerIds = Object.keys(val).filter((id) => id !== currentUserId);
-            const now = Date.now();
-            const isTyping = partnerIds.some((id) => val[id] && now - val[id] < 4000);
-            callback(isTyping);
-          } else {
-            callback(false);
-          }
+        const typingCol = collection(db, 'chat_rooms', roomId, 'typing');
+        unsubscribeFirestore = onSnapshot(typingCol, (snapshot) => {
+          let isTyping = false;
+          const now = Date.now();
+          snapshot.forEach((d) => {
+            if (d.id !== currentUserId) {
+              const data = d.data();
+              if (data?.timestamp && now - data.timestamp < 4000) {
+                isTyping = true;
+              }
+            }
+          });
+          callback(isTyping);
+        }, () => {
+          checkLocalTyping();
         });
-
-        unsubscribeFirebase = () => {
-          off(typingRef, 'value', listener);
-        };
       } catch {}
     }
 
@@ -567,7 +574,7 @@ export class FirebaseChatService {
 
     broadcastChannel?.addEventListener('message', handleBroadcast);
     return () => {
-      if (unsubscribeFirebase) unsubscribeFirebase();
+      if (unsubscribeFirestore) unsubscribeFirestore();
       broadcastChannel?.removeEventListener('message', handleBroadcast);
     };
   }
@@ -601,12 +608,13 @@ export class FirebaseChatService {
 
       saveStoredMessages(allMsgs);
 
-      if (db) {
+      const db = this.getDb();
+      if (db && roomId) {
         try {
-          const reactionRef = ref(db, `messages/${roomId}/${messageId}/reactions`);
-          await set(reactionRef, msg.reactions);
+          const msgRef = doc(db, 'chat_rooms', roomId, 'messages', messageId);
+          await updateDoc(msgRef, { reactions: msg.reactions });
         } catch (err) {
-          console.warn('Firebase reaction update failed:', err);
+          console.warn('[FirebaseChat] Reaction update failed:', err);
         }
       }
     }
@@ -614,10 +622,6 @@ export class FirebaseChatService {
 
   /**
    * 72시간(3일) 초과 대화 만료 삭제 및 양측 읽음 완료 대화 로컬 브라우저 저장 최적화
-   * Requirement:
-   * "사용자간 대화는 해당 사용자브라우저에 저장하게 하여 데이터베이스는 일시적으로만 대화를 저장하고
-   * 양측 사용자가 대화(텍스트)를 읽으면 대화를 사용자 브라우저에 저장.
-   * 양측이 읽지 않아도 발생 72시간이 넘는경우 대화방 내 모든 대화를 삭제해서 데이터베이스 최적화"
    */
   public static readonly MESSAGE_TTL_MS = 72 * 60 * 60 * 1000; // 72 hours
 
@@ -634,7 +638,6 @@ export class FirebaseChatService {
       msgs.forEach((m) => {
         const isOlderThan72h = now - m.timestamp > this.MESSAGE_TTL_MS;
         if (isOlderThan72h) {
-          // 72시간 초과 시 영구 만료 삭제
           purgedCount++;
         } else {
           remaining.push(m);
