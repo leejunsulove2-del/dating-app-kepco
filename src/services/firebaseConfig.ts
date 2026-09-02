@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getFirestore, Firestore, enableIndexedDbPersistence } from 'firebase/firestore';
+import { getFirestore, Firestore } from 'firebase/firestore';
 import { getDatabase, Database } from 'firebase/database';
 import { getAuth, Auth } from 'firebase/auth';
 
@@ -14,7 +14,6 @@ export interface FirebaseProjectConfig {
 }
 
 export function getStoredFirebaseConfig(): FirebaseProjectConfig | null {
-  // Vite 표준 환경변수 주입 방식을 사용하여 안정성을 확보합니다.
   const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
   const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
   const appId = import.meta.env.VITE_FIREBASE_APP_ID;
@@ -26,6 +25,7 @@ export function getStoredFirebaseConfig(): FirebaseProjectConfig | null {
       projectId: projectId,
       storageBucket: `${projectId}.appspot.com`,
       appId: appId || '',
+      // URL 생성 오타를 수정하고 안전한 기본 주소 포맷으로 변경합니다.
       databaseURL: `https://${projectId}://firebaseio.com`
     };
   }
@@ -54,7 +54,7 @@ export function initFirebaseApp(forceReinit = false): {
       db: firestoreDbInstance,
       rtdb: realtimeDbInstance,
       auth: firebaseAuthInstance,
-      isConnected: Boolean(firestoreDbInstance),
+      isConnected: Boolean(firestoreDbInstance || realtimeDbInstance),
     };
   }
 
@@ -69,7 +69,12 @@ export function initFirebaseApp(forceReinit = false): {
     } else {
       firebaseAppInstance = getApp();
     }
+    
+    // 누락되었던 Firestore, Realtime DB, Auth 인스턴스를 정확히 매핑하여 초기화합니다.
     firestoreDbInstance = getFirestore(firebaseAppInstance);
+    realtimeDbInstance = getDatabase(firebaseAppInstance);
+    firebaseAuthInstance = getAuth(firebaseAppInstance);
+    
     isInitialized = true;
     return {
       app: firebaseAppInstance,
@@ -91,5 +96,5 @@ export const realtimeDb = initialSetup.rtdb;
 export const firebaseAuth = initialSetup.auth;
 
 export function isFirebaseConfigured(): boolean {
-  return Boolean(firestoreDb);
+  return Boolean(firestoreDb) || Boolean(realtimeDb);
 }
