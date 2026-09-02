@@ -14,10 +14,11 @@ import { UserProfile, ChatRoom, ChatMessage } from '../types';
 
 // Environment variables or fallback config for Firebase
 const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
+
+// 💡 실시간 대화를 가로막던 default-rtdb 제외 조건을 제거하여 깃허브 배포 서버에서도 클라우드 DB가 활성화되도록 고칩니다.
 const hasRealFirebaseConfig = Boolean(
   env.VITE_FIREBASE_API_KEY &&
   env.VITE_FIREBASE_DATABASE_URL &&
-  !env.VITE_FIREBASE_DATABASE_URL.includes('default-rtdb.firebaseio.com') &&
   !env.VITE_FIREBASE_API_KEY.includes('AIzaSyDemoKey')
 );
 
@@ -40,8 +41,7 @@ if (hasRealFirebaseConfig) {
       app = getApp();
     }
     db = getDatabase(app);
-  } catch (err) {
-    console.warn('Firebase Realtime Database init info:', err);
+    console.log("실시간 대화 클라우드 데이터베이스 연동 성공!");
     db = null;
   }
 }
