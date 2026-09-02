@@ -13,48 +13,28 @@ export interface FirebaseProjectConfig {
   databaseURL?: string;
 }
 
-const CUSTOM_CONFIG_KEY = 'love_app_firebase_custom_config';
+// 깃허브 배포 시 주입되는 실제 환경 변수 로드
+const env = (import.meta as any).env || {};
 
-// 1. Get configuration from environment variables or custom local storage
 export function getStoredFirebaseConfig(): FirebaseProjectConfig | null {
-  try {
-    const raw = localStorage.getItem(CUSTOM_CONFIG_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && parsed.apiKey && parsed.projectId) {
-        return parsed;
-      }
-    }
-  } catch (e) {
-    console.warn('Failed to parse custom Firebase config:', e);
-  }
-
-  // Fallback to import.meta.env
-  const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
-  if (env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID && !env.VITE_FIREBASE_API_KEY.includes('AIzaSyDemoKey')) {
+  // 빌드 타임에 주입된 진짜 파이어베이스 키가 존재하면 이를 최우선으로 사용합니다.
+  if (env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID) {
+    const projectId = env.VITE_FIREBASE_PROJECT_ID;
     return {
       apiKey: env.VITE_FIREBASE_API_KEY,
-      authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || `${env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
-      projectId: env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || `${env.VITE_FIREBASE_PROJECT_ID}.appspot.com`,
-      messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+      authDomain: `${projectId}.firebaseapp.com`,
+      projectId: projectId,
+      storageBucket: `${projectId}.appspot.com`,
       appId: env.VITE_FIREBASE_APP_ID || '',
-      databaseURL: env.VITE_FIREBASE_DATABASE_URL || `https://${env.VITE_FIREBASE_PROJECT_ID}-default-rtdb.firebaseio.com`,
+      databaseURL: `https://${projectId}://firebaseio.com`
     };
   }
 
   return null;
 }
 
-export function saveCustomFirebaseConfig(config: FirebaseProjectConfig): void {
-  localStorage.setItem(CUSTOM_CONFIG_KEY, JSON.stringify(config));
-  // Re-initialize Firebase
-  initFirebaseApp(true);
-}
-
-export function clearCustomFirebaseConfig(): void {
-  localStorage.removeItem(CUSTOM_CONFIG_KEY);
-}
+export function saveCustomFirebaseConfig(config: FirebaseProjectConfig): void {}
+export function clearCustomFirebaseConfig(): void {}
 
 let firebaseAppInstance: FirebaseApp | null = null;
 let firestoreDbInstance: Firestore | null = null;
@@ -99,35 +79,21 @@ export function initFirebaseApp(forceReinit = false): {
 
     firestoreDbInstance = getFirestore(firebaseAppInstance);
     
-    // Attempt offline persistence cache
+    // 오프라인 캐시 지속성 유지 (실패해도 정상 작동하도록 보완)
     try {
       if (typeof window !== 'undefined') {
-        enableIndexedDbPersistence(firestoreDbInstance).catch((err) => {
-          if (err.code === 'failed-precondition') {
-            // Multiple tabs open, persistence can only be enabled in one tab at a time.
-          } else if (err.code === 'unimplemented') {
-            // Browser doesn't support indexedDB persistence
-          }
-        });
+        enableIndexedDbPersistence(firestoreDbInstance).catch(() => {});
       }
-    } catch {
-      // Ignore persistence error
-    }
+    } catch {}
 
-    if (config.databaseURL) {
-      try {
-        realtimeDbInstance = getDatabase(firebaseAppInstance);
-      } catch (e) {
-        console.warn('Realtime database init fallback', e);
-      }
-    }
+    try {
+      realtimeDbInstance = getDatabase(firebaseAppInstance);
+    } catch {}
 
     try {
       firebaseAuthInstance = getAuth(firebaseAppInstance);
       firebaseAuthInstance.languageCode = 'ko';
-    } catch (e) {
-      console.warn('Firebase Auth init fallback', e);
-    }
+    } catch {}
 
     isInitialized = true;
     return {
@@ -149,7 +115,7 @@ export function initFirebaseApp(forceReinit = false): {
   }
 }
 
-// Initial bootstrap attempt
+// 초기 부트스트랩 시도
 const initialSetup = initFirebaseApp();
 export const firebaseApp = initialSetup.app;
 export const firestoreDb = initialSetup.db;
@@ -157,6 +123,5 @@ export const realtimeDb = initialSetup.rtdb;
 export const firebaseAuth = initialSetup.auth;
 
 export function isFirebaseConfigured(): boolean {
-  const config = getStoredFirebaseConfig();
-  return Boolean(config && config.apiKey && config.projectId);
+  return Boolean(firestoreDb);
 }
