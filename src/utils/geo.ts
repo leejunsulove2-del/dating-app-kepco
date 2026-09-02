@@ -18,7 +18,7 @@ export function calculateDistanceKm(
       Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const d = R * c;
-  return Math.round(d * 10) / 10; // 1 decimal place
+  return Math.round(d * 1000) / 1000; // 3 decimal places (meter precision)
 }
 
 /**

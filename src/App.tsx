@@ -5,6 +5,7 @@ import { FirebaseChatService } from './services/firebaseChatService';
 import { ItemService } from './services/itemService';
 import { AdminService } from './services/adminService';
 import { FirestoreSyncService } from './services/firestoreSyncService'; // 📍 실시간 백엔드 연결 추가
+import { calculateDistanceKm } from './utils/geo';
 import { AuthModal } from './components/AuthModal';
 import { ProfileSetupModal } from './components/ProfileSetupModal';
 import { LocationConsentModal } from './components/LocationConsentModal';
@@ -80,15 +81,20 @@ export default function App() {
   const filterRef = useRef<FilterOptions>(filter);
   filterRef.current = filter;
 
-  // 30-Second batch interval synchronization state (individualized per session/active time)
-  const [syncCountdown, setSyncCountdown] = useState(30);
+  // 📍 [파이어베이스 Spark 요금제 최적화] 이전 동기화 위치 추적 Ref (50m 이내 미세 이동 시 Firestore 쓰기 스킵)
+  const lastSyncedLocationRef = useRef<{ latitude: number; longitude: number } | null>(
+    currentUser?.location ? { latitude: currentUser.location.latitude, longitude: currentUser.location.longitude } : null
+  );
+
+  // 120-Second (2-Minute) batch interval synchronization state (individualized per session/active time)
+  const [syncCountdown, setSyncCountdown] = useState(120);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const triggerInventoryReload = useCallback(() => {
     setInventoryVersion((v) => v + 1);
   }, []);
 
-  // 📍 [개정] 기기의 GPS 하드웨어 데이터를 파이어베이스 실시간 서버 인프라에 즉각 스트리밍
+  // 📍 [개정] 기기의 GPS 하드웨어 데이터를 파이어베이스 실시간 서버 인프라에 즉각 스트리밍 (50m 이내 미세 이동 최적화)
   const requestAccurateLocation = useCallback((silent = false) => {
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       if (!silent) setIsSyncing(true);
@@ -114,8 +120,17 @@ export default function App() {
             DatingService.saveCurrentUser(updatedUser);
             setCurrentUser(updatedUser);
             
-            // 🚀 실시간 위치 데이터베이스로 전송 단차 연결
-            FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
+            // 📍 [Spark 무료 플랜 최적화] 이전 동기화 위치와 비교하여 50m(0.05km) 이하 미세 변화 시 Firestore 업로드 생략(스킵)
+            const prev = lastSyncedLocationRef.current;
+            const distanceChangedKm = prev
+              ? calculateDistanceKm(prev.latitude, prev.longitude, latitude, longitude)
+              : 999;
+
+            if (distanceChangedKm > 0.05) {
+              lastSyncedLocationRef.current = { latitude, longitude };
+              // 🚀 실시간 위치 데이터베이스로 전송 단차 연결
+              FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
+            }
           }
 
           DatingService.initDatabase(latitude, longitude, true);
@@ -221,7 +236,7 @@ export default function App() {
       if (unsubLiveLocation) unsubLiveLocation();
     };
   }, [currentUser?.id]);
-  // 📍 [개정] 수동 고속 새로고침 및 하드웨어 동기화 핸들러 개조
+  // 📍 [개정] 수동 고속 새로고침 및 하드웨어 동기화 핸들러 개조 (120초 주기 및 50m 이내 스킵 최적화)
   const performLocationSync = useCallback(() => {
     const user = currentUserRef.current;
     if (!user) return;
@@ -235,8 +250,18 @@ export default function App() {
         const loc = { latitude, longitude, lastUpdated: Date.now() };
         
         setCurrentLocation(loc);
-        FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
-        DatingService.syncUserLocation(user.id, loc);
+
+        // 📍 [Spark 무료 플랜 최적화] 이전 동기화 위치와 비교하여 50m(0.05km) 이하 미세 변화 시 Firestore 업로드 및 위치 동기화 생략(스킵)
+        const prev = lastSyncedLocationRef.current;
+        const distanceChangedKm = prev
+          ? calculateDistanceKm(prev.latitude, prev.longitude, latitude, longitude)
+          : 999;
+
+        if (distanceChangedKm > 0.05) {
+          lastSyncedLocationRef.current = { latitude, longitude };
+          FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
+          DatingService.syncUserLocation(user.id, loc);
+        }
 
         const isAntennaOn = ItemService.isBoostRadiusActive(user.id);
         const effectiveFlt = {
@@ -245,7 +270,7 @@ export default function App() {
         };
         const users = DatingService.fetchNearbyUsers(latitude, longitude, user.id, effectiveFlt);
         setNearbyUsers(users);
-        setSyncCountdown(30);
+        setSyncCountdown(120);
         setIsSyncing(false);
       }, () => {
         setIsSyncing(false);
@@ -253,7 +278,7 @@ export default function App() {
     }
   }, []);
 
-  // 30초 단위로 수동 타이머 동기화 보조 가동 (안전 장치)
+  // 120초(2분) 단위로 수동 타이머 동기화 보조 가동 (안전 장치)
   useEffect(() => {
     if (!currentUser?.id || !hasLocationConsent) return;
 
@@ -261,7 +286,7 @@ export default function App() {
       setSyncCountdown((prev) => {
         if (prev <= 1) {
           performLocationSync();
-          return 30;
+          return 120;
         }
         return prev - 1;
       });
@@ -311,6 +336,7 @@ export default function App() {
       DatingService.saveCurrentUser(user);
       
       // 로그인 완료 시 내 기기 위치 최초 전송 쏘기
+      lastSyncedLocationRef.current = { latitude: currentLocation.latitude, longitude: currentLocation.longitude };
       FirestoreSyncService.uploadMyLocation(user.id, currentLocation.latitude, currentLocation.longitude);
       
       const users = DatingService.fetchNearbyUsers(
@@ -336,6 +362,7 @@ export default function App() {
     setHasLocationConsent(true);
     DatingService.saveCurrentUser(completedUser);
 
+    lastSyncedLocationRef.current = { latitude: currentLocation.latitude, longitude: currentLocation.longitude };
     FirestoreSyncService.uploadMyLocation(completedUser.id, currentLocation.latitude, currentLocation.longitude);
 
     const users = DatingService.fetchNearbyUsers(
@@ -370,6 +397,7 @@ export default function App() {
       if (updated) setCurrentUser(updated);
 
       // 📍 [개정] 위치 권한 동의 완료 시 즉각 클라우드 전송 트리거
+      lastSyncedLocationRef.current = { latitude: coords.latitude, longitude: coords.longitude };
       FirestoreSyncService.uploadMyLocation(currentUser.id, coords.latitude, coords.longitude);
       DatingService.initDatabase(coords.latitude, coords.longitude);
       

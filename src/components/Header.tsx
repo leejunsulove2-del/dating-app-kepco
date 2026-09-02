@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
         )}
       </div>
 
-      {/* Center 30s Status (Desktop) */}
+      {/* Center Location Sync Status (120s / Desktop) */}
       <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-full text-xs text-stone-700">
         <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
         <span className="font-semibold text-stone-600">위치 전송:</span>

@@ -787,7 +787,7 @@ export const MapView: React.FC<MapViewProps> = ({
       {/* Map Container */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
-      {/* Floating 30s Sync Status Pill */}
+      {/* Floating Location Sync Status Pill */}
       <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-white/95 backdrop-blur-md px-3.5 py-2 rounded-2xl shadow-lg border border-stone-200/80 text-xs text-stone-800">
         <div className="relative flex items-center justify-center w-3 h-3">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
