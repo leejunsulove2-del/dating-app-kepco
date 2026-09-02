@@ -325,10 +325,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setSanctionCustomReason('');
   };
 
-  const handleExecuteDirectSanction = (e: React.FormEvent) => {
+    const handleExecuteDirectSanction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!sanctionTargetUser) return;
-
     const res = AdminService.directSanctionUser(
       adminProfile,
       sanctionTargetUser.id,
@@ -336,7 +335,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       sanctionReasonType,
       sanctionCustomReason.trim() || undefined
     );
-
     if (res.success) {
       showToast(res.message, 'success');
       setSanctionTargetUser(null);
@@ -388,7 +386,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       showToast(err.message || '오류가 발생했습니다.', 'error');
     }
   };
-
 
   const handleOpenGiftModal = (user: UserProfile) => {
     const protection = AdminService.isProtectedAdmin(user);
