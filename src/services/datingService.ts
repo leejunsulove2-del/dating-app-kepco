@@ -528,8 +528,8 @@ export class DatingService {
    */
   public static async syncFromCloudFirestore(): Promise<UserProfile[]> {
     try {
-      const cloudUsers = this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
-      const localUsers = this.getAllUsers();
+      const cloudUsers = this.cloudLiveUsers && this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
+      const localUsers = this.getAllUsers() || [];
       const mergedMap = new Map<string, UserProfile>();
 
       for (const u of localUsers) {
@@ -540,21 +540,21 @@ export class DatingService {
       }
 
       const mergedList = Array.from(mergedMap.values());
-      
       localStorage.setItem('dating_app_all_users', JSON.stringify(mergedList));
       return mergedList;
     } catch (e) {
-      console.warn('Failed to sync from cloud live data memory:', e);
+      console.warn('Failed to sync cloud memory:', e);
     }
-    return this.getAllUsers();
+    return this.getAllUsers() || [];
   }
+
 
   /**
    * Listen to live real-time user updates across all devices
    */
   public static subscribeToLiveUsers(callback?: (users: UserProfile[]) => void): () => void {
-    const cloudUsers = this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
-    const localUsers = this.getAllUsers();
+    const cloudUsers = this.cloudLiveUsers && this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
+    const localUsers = this.getAllUsers() || [];
     const mergedMap = new Map<string, UserProfile>();
 
     for (const u of localUsers) {
@@ -565,7 +565,6 @@ export class DatingService {
     }
 
     const mergedList = Array.from(mergedMap.values());
-    
     localStorage.setItem('dating_app_all_users', JSON.stringify(mergedList));
 
     const curUser = this.getCurrentUser();
@@ -581,6 +580,7 @@ export class DatingService {
     }
     return () => {};
   }
+
 
   /**
    * Get all registered users (Guaranteed unique by id)
