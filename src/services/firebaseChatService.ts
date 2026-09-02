@@ -517,9 +517,7 @@ export class FirebaseChatService {
  broadcastChannel?.removeEventListener('message', handleBroadcast);
  };
  }
- /**
- * Message Emoji Reaction Toggle ( ❤ 👍 😊 🥂 🔥 )
- */
+ 
  public static async toggleReaction(
  roomId: string,
  messageId: string,
