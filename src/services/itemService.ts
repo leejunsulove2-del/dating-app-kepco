@@ -270,3 +270,16 @@ export class ItemService {
  static addMessageTickets(userId: string, count: number): number { const inv = this.getInventory(userId); inv.messageTickets = (inv.messageTickets || 0) + count; this.saveInventory(userId, inv); return inv.messageTickets; }
  static addStickerCards(userId: string, count: number): number { const inv = this.getInventory(userId); inv.stickerCards = (inv.stickerCards || 0) + count; this.saveInventory(userId, inv); return inv.stickerCards; }
 }
+
+/**
+ * 💡 [기존 UI 호환성 긴급 조치]
+ * 관리자 대시보드 UI 컴포넌트가 옛날 함수명(sendItemToUser)으로 호출하더라도,
+ * 내부적으로는 담당자 한도가 실시간 마이너스 차감되는 giftItemToUser 함수를 강제로 실행하도록 연결합니다.
+ */
+export async function sendItemToUser(payload: { userId: string; itemType: ItemId; amount: number }) {
+  // 현재 로그인된 기관 관리자의 ID를 가져오는 전역 상태나 로컬 세션의 키값 구조를 매핑합니다.
+  // 로컬 세션 스토리지나 쿠키 등에서 로그인된 관리자 UID를 파악하여 첫 번째 인자(adminId)로 자동 주입합니다.
+  const loggedInAdminId = localStorage.getItem('yeon_admin_logged_in_uid') || 'admin_master';
+  
+  return ItemService.giftItemToUser(loggedInAdminId, payload.userId, payload.itemType, payload.amount);
+}
