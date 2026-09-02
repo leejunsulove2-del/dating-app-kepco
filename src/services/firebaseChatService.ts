@@ -15,12 +15,12 @@ import { UserProfile, ChatRoom, ChatMessage } from '../types';
 // Environment variables or fallback config for Firebase
 const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
 
-// 💡 [실시간 대화 차단 해제] 무료 요금제 주소(default-rtdb) 검증 제외 조건을 완전히 제거하여
-// 깃허브 배포 서버에서도 파이어베이스 실시간 클라우드 DB가 100% 정상 활성화되도록 수정했습니다.
+// 💡 파이어베이스 환경변수 안전 검증식으로 전면 수정
 const hasRealFirebaseConfig = Boolean(
+ env &&
  env.VITE_FIREBASE_API_KEY &&
  env.VITE_FIREBASE_DATABASE_URL &&
- !env.VITE_FIREBASE_API_KEY.includes('AIzaSyDemoKey')
+ !String(env.VITE_FIREBASE_API_KEY).includes('AIzaSyDemoKey')
 );
 
 let app: FirebaseApp | null = null;
