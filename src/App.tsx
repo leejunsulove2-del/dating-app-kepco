@@ -4,6 +4,7 @@ import { DatingService } from './services/datingService';
 import { FirebaseChatService } from './services/firebaseChatService';
 import { ItemService } from './services/itemService';
 import { AdminService } from './services/adminService';
+import { FirestoreSyncService } from './services/firestoreSyncService'; // 📍 실시간 백엔드 연결 추가
 import { AuthModal } from './components/AuthModal';
 import { ProfileSetupModal } from './components/ProfileSetupModal';
 import { LocationConsentModal } from './components/LocationConsentModal';
@@ -69,7 +70,6 @@ export default function App() {
     selectedInterests: [],
     genderFilter: 'all',
   });
-
   // Keep latest refs to avoid re-creating callbacks and triggering infinite effect loops
   const currentUserRef = useRef<UserProfile | null>(currentUser);
   currentUserRef.current = currentUser;
@@ -88,7 +88,7 @@ export default function App() {
     setInventoryVersion((v) => v + 1);
   }, []);
 
-  // Accurate Geolocation Retrieval
+  // 📍 [개정] 기기의 GPS 하드웨어 데이터를 파이어베이스 실시간 서버 인프라에 즉각 스트리밍
   const requestAccurateLocation = useCallback((silent = false) => {
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       if (!silent) setIsSyncing(true);
@@ -113,20 +113,12 @@ export default function App() {
             };
             DatingService.saveCurrentUser(updatedUser);
             setCurrentUser(updatedUser);
+            
+            // 🚀 실시간 위치 데이터베이스로 전송 단차 연결
+            FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
           }
 
-          // Relocate nearby pool around the user's real GPS coordinates
           DatingService.initDatabase(latitude, longitude, true);
-
-          if (user) {
-            const users = DatingService.fetchNearbyUsers(
-              latitude,
-              longitude,
-              user.id,
-              filterRef.current
-            );
-            setNearbyUsers(users);
-          }
           if (!silent) {
             setTimeout(() => setIsSyncing(false), 300);
           }
@@ -162,9 +154,8 @@ export default function App() {
     };
   }, [currentUser?.id]);
 
-  // Check login, location consent & daily attendance prompt upon mount + DB Optimization Sweep + Cloud Firestore Sync
+  // 📍 [개정] 최초 컴포넌트 마운트 시 실시간 위치 스트리밍 가동 및 상호 작용 구독
   useEffect(() => {
-    // Run 72-hour TTL message purge & local storage DB optimization
     try {
       FirebaseChatService.purgeExpiredAndOptimizeMessages();
     } catch {
@@ -174,52 +165,38 @@ export default function App() {
     DatingService.initDatabase(currentLocation.latitude, currentLocation.longitude);
     requestAccurateLocation(true);
 
-    // Sync all users from Cloud Firestore & subscribe to real-time changes
-    DatingService.syncFromCloudFirestore().then((cloudUsers) => {
-      if (currentUserRef.current) {
-        const freshCurrent = cloudUsers.find((u) => u.id === currentUserRef.current?.id);
-        if (freshCurrent) {
-          setCurrentUser(freshCurrent);
-        }
-        const users = DatingService.fetchNearbyUsers(
-          currentLocationRef.current.latitude,
-          currentLocationRef.current.longitude,
-          currentUserRef.current.id,
-          filterRef.current
-        );
-        setNearbyUsers(users);
-      }
-    });
-
-    const unsubLiveUsers = DatingService.subscribeToLiveUsers((allUsers) => {
-      if (currentUserRef.current) {
-        const freshCurrent = allUsers.find((u) => u.id === currentUserRef.current?.id);
-        if (freshCurrent) {
-          setCurrentUser(freshCurrent);
-        }
-        const users = DatingService.fetchNearbyUsers(
-          currentLocationRef.current.latitude,
-          currentLocationRef.current.longitude,
-          currentUserRef.current.id,
-          filterRef.current
-        );
-        setNearbyUsers(users);
-      }
-    });
+    let unsubLiveLocation: (() => void) | null = null;
 
     if (currentUser) {
+      // 🚀 클라우드 파이어베이스 서버의 다른 모든 회원 실시간 위치 구독 개시 (onSnapshot 연동)
+      FirestoreSyncService.subscribeMembersLocation(currentUser.id, (cloudUsers) => {
+        const isAntennaOn = ItemService.isBoostRadiusActive(currentUser.id);
+        const effectiveFilter = {
+          ...filterRef.current,
+          maxDistanceKm: isAntennaOn ? filterRef.current.maxDistanceKm : 1.0,
+        };
+
+        // 메모리 DB 동기화 동시 처리
+        DatingService.updateInternalUsersData(cloudUsers);
+        
+        const filteredNearby = DatingService.fetchNearbyUsers(
+          currentLocationRef.current.latitude,
+          currentLocationRef.current.longitude,
+          currentUser.id,
+          effectiveFilter
+        );
+        setNearbyUsers(filteredNearby);
+      });
+
+      unsubLiveLocation = () => {
+        FirestoreSyncService.unsubscribeMembersLocation();
+      };
+
       if (!currentUser.company || !currentUser.birthDate || !currentUser.photoUrl) {
         setTempUserForSetup(currentUser);
         setProfileSetupOpen(true);
       } else {
         setHasLocationConsent(true);
-        const users = DatingService.fetchNearbyUsers(
-          currentLocation.latitude,
-          currentLocation.longitude,
-          currentUser.id,
-          filter
-        );
-        setNearbyUsers(users);
 
         // Check if attendance is unclaimed today
         const daily = ItemService.getDailyActivity(currentUser.id);
@@ -228,7 +205,6 @@ export default function App() {
             setAttendanceModalOpen(true);
           }, 800);
         } else {
-          // If attendance is already claimed, check if time-based reward is available right now
           const timeRewardStatus = ItemService.getTimeRewardStatus(currentUser.id);
           if (timeRewardStatus.isEligibleNow) {
             setTimeout(() => {
@@ -242,43 +218,42 @@ export default function App() {
     }
 
     return () => {
-      unsubLiveUsers();
+      if (unsubLiveLocation) unsubLiveLocation();
     };
-  }, []);
-
-  // Location synchronization handler (Transmits only coordinates, fetches nearby, runs on individual 30s cycle)
+  }, [currentUser?.id]);
+  // 📍 [개정] 수동 고속 새로고침 및 하드웨어 동기화 핸들러 개조
   const performLocationSync = useCallback(() => {
     const user = currentUserRef.current;
     if (!user) return;
 
-    const loc = currentLocationRef.current;
-    const currentFlt = filterRef.current;
-
     setIsSyncing(true);
-    DatingService.syncUserLocation(user.id, loc);
 
-    // Fetch updated nearby users within permitted radius (1km base or user chosen radius up to 30km when antenna active)
-    const isAntennaOn = ItemService.isBoostRadiusActive(user.id);
-    const effectiveFlt = {
-      ...currentFlt,
-      maxDistanceKm: isAntennaOn ? currentFlt.maxDistanceKm : 1.0,
-    };
-    const users = DatingService.fetchNearbyUsers(
-      loc.latitude,
-      loc.longitude,
-      user.id,
-      effectiveFlt
-    );
+    // 하드웨어 실시간 GPS 정보 전송 트래킹 강제 호출
+    if (typeof navigator !== 'undefined' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition((position) => {
+        const { latitude, longitude } = position.coords;
+        const loc = { latitude, longitude, lastUpdated: Date.now() };
+        
+        setCurrentLocation(loc);
+        FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
+        DatingService.syncUserLocation(user.id, loc);
 
-    setNearbyUsers(users);
-    setSyncCountdown(30);
-
-    setTimeout(() => {
-      setIsSyncing(false);
-    }, 400);
+        const isAntennaOn = ItemService.isBoostRadiusActive(user.id);
+        const effectiveFlt = {
+          ...filterRef.current,
+          maxDistanceKm: isAntennaOn ? filterRef.current.maxDistanceKm : 1.0,
+        };
+        const users = DatingService.fetchNearbyUsers(latitude, longitude, user.id, effectiveFlt);
+        setNearbyUsers(users);
+        setSyncCountdown(30);
+        setIsSyncing(false);
+      }, () => {
+        setIsSyncing(false);
+      }, { enableHighAccuracy: true });
+    }
   }, []);
 
-  // 30-Second interval timer based on individual session connection timestamp
+  // 30초 단위로 수동 타이머 동기화 보조 가동 (안전 장치)
   useEffect(() => {
     if (!currentUser?.id || !hasLocationConsent) return;
 
@@ -295,7 +270,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentUser?.id, hasLocationConsent, performLocationSync]);
 
-  // Re-fetch when filter or inventory changes (e.g. radius boost activated)
+  // 필터 혹은 인벤토리 변경에 대응하는 수동 가속 트리거
   useEffect(() => {
     if (currentUser && hasLocationConsent) {
       const isAntennaOn = ItemService.isBoostRadiusActive(currentUser.id);
@@ -334,6 +309,10 @@ export default function App() {
       setCurrentUser(user);
       setHasLocationConsent(true);
       DatingService.saveCurrentUser(user);
+      
+      // 로그인 완료 시 내 기기 위치 최초 전송 쏘기
+      FirestoreSyncService.uploadMyLocation(user.id, currentLocation.latitude, currentLocation.longitude);
+      
       const users = DatingService.fetchNearbyUsers(
         currentLocation.latitude,
         currentLocation.longitude,
@@ -356,6 +335,9 @@ export default function App() {
     setProfileSetupOpen(false);
     setHasLocationConsent(true);
     DatingService.saveCurrentUser(completedUser);
+
+    FirestoreSyncService.uploadMyLocation(completedUser.id, currentLocation.latitude, currentLocation.longitude);
+
     const users = DatingService.fetchNearbyUsers(
       currentLocation.latitude,
       currentLocation.longitude,
@@ -387,7 +369,10 @@ export default function App() {
       const updated = DatingService.syncUserLocation(currentUser.id, loc);
       if (updated) setCurrentUser(updated);
 
+      // 📍 [개정] 위치 권한 동의 완료 시 즉각 클라우드 전송 트리거
+      FirestoreSyncService.uploadMyLocation(currentUser.id, coords.latitude, coords.longitude);
       DatingService.initDatabase(coords.latitude, coords.longitude);
+      
       const users = DatingService.fetchNearbyUsers(
         coords.latitude,
         coords.longitude,
@@ -487,7 +472,6 @@ export default function App() {
     }
     alert(`[완료] 기존 테스트 계정을 모두 삭제하고, 내 주변 랜덤 반경(0.2km ~ 28km)으로 새 테스트 계정 ${res.newUsers.length}명이 생성되었습니다!`);
   }, []);
-
   // Get active search radius (1km base or user-selected distance up to 30km when antenna is active)
   const isAntennaActive = currentUser ? ItemService.isBoostRadiusActive(currentUser.id) : false;
   const activeRadiusKm = isAntennaActive ? filter.maxDistanceKm : 1.0;
