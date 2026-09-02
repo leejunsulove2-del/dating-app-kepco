@@ -44,22 +44,11 @@ export const DEFAULT_ALLOWED_DOMAINS: AllowedDomainItem[] = [
 ];
 
 export class DatingService {
-  // 📍 파이어베이스 실시간 서버의 데이터를 로컬 코어와 연결해주는 실제 데이터 배열
-  private static cloudLiveUsers: UserProfile[] = [];
-
-  /**
-   * 📍 App.tsx의 파이어베이스 실시간 수신 신호를 메모리에 실시간 주입
-   */
-  public static updateInternalUsersData(cloudUsers: UserProfile[]): void {
-    this.cloudLiveUsers = cloudUsers;
-  }
-
   // Default coordinates (Seoul Gangnam Station) if browser location is unavailable or blocked
   public static DEFAULT_CENTER = {
     latitude: 37.4979,
     longitude: 127.0276,
   };
-
 
   /**
    * Initialize local dataset if empty or relocate test accounts around user coordinates
@@ -528,26 +517,47 @@ export class DatingService {
    */
   public static async syncFromCloudFirestore(): Promise<UserProfile[]> {
     try {
-      const cloudUsers = this.cloudLiveUsers && this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
-      const localUsers = this.getAllUsers() || [];
-      const mergedMap = new Map<string, UserProfile>();
-
-      for (const u of localUsers) {
-        if (u && u.id) mergedMap.set(u.id, u);
+      // 1. Try Server API
+      const serverData = await ApiSyncService.fetchAllData();
+      if (serverData && serverData.users && serverData.users.length > 0) {
+        const localUsers = this.getAllUsers();
+        const mergedMap = new Map<string, UserProfile>();
+        for (const u of localUsers) {
+          if (u && u.id) mergedMap.set(u.id, u);
+        }
+        for (const su of serverData.users) {
+          if (su && su.id) mergedMap.set(su.id, su);
+        }
+        const mergedList = Array.from(mergedMap.values());
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+        return mergedList;
       }
-      for (const cu of cloudUsers) {
-        if (cu && cu.id) mergedMap.set(cu.id, cu);
-      }
 
-      const mergedList = Array.from(mergedMap.values());
-      localStorage.setItem('dating_app_all_users', JSON.stringify(mergedList));
-      return mergedList;
+      // 2. Try Firestore
+      const cloudUsers = await FirestoreSyncService.getAllUsers();
+      if (cloudUsers && cloudUsers.length > 0) {
+        const localUsers = this.getAllUsers();
+        const mergedMap = new Map<string, UserProfile>();
+
+        for (const u of localUsers) {
+          if (u && u.id) mergedMap.set(u.id, u);
+        }
+
+        for (const cu of cloudUsers) {
+          if (cu && cu.id) {
+            mergedMap.set(cu.id, cu);
+          }
+        }
+
+        const mergedList = Array.from(mergedMap.values());
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+        return mergedList;
+      }
     } catch (e) {
-      console.warn('Failed to sync cloud memory:', e);
+      console.warn('Failed to sync from server/Firestore:', e);
     }
-    return this.getAllUsers() || [];
+    return this.getAllUsers();
   }
-
 
   /**
    * Listen to live real-time user updates across all devices
@@ -590,7 +600,6 @@ export class DatingService {
       if (unsub) unsub();
     };
   }
-
 
   /**
    * Get all registered users (Guaranteed unique by id)
@@ -648,27 +657,7 @@ export class DatingService {
     currentUserId: string,
     filter: FilterOptions
   ): UserProfile[] {
-    // 💡 [교체 부위] 로컬 가짜 DB 대신 파이어베이스 실시간 클라우드 소스를 주입합니다.
-    const baseUsers = this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : this.users;
-    const allUsers: UserProfile[] = [];
-    const addedIds = new Set<string>();
-
-    // 1. 파이어베이스 실시간 접속 유저들을 먼저 탑재
-    baseUsers.forEach((u) => {
-      if (u.id !== currentUserId && !addedIds.has(u.id)) {
-        allUsers.push(u);
-        addedIds.add(u.id);
-      }
-    });
-
-    // 2. 관리 용도의 가상 테스트용 계정들도 안전하게 결합
-    this.testAccounts.forEach((t) => {
-      if (t.id !== currentUserId && !addedIds.has(t.id)) {
-        allUsers.push(t);
-        addedIds.add(t.id);
-      }
-    });
-
+    const allUsers = this.getAllUsers();
     const seenIds = new Set<string>();
 
     return allUsers
