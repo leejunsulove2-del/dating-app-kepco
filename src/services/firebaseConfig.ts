@@ -13,23 +13,22 @@ export interface FirebaseProjectConfig {
   databaseURL?: string;
 }
 
-// 깃허브 배포 시 주입되는 실제 환경 변수 로드
-const env = (import.meta as any).env || {};
-
 export function getStoredFirebaseConfig(): FirebaseProjectConfig | null {
-  // 빌드 타임에 주입된 진짜 파이어베이스 키가 존재하면 이를 최우선으로 사용합니다.
-  if (env.VITE_FIREBASE_API_KEY && env.VITE_FIREBASE_PROJECT_ID) {
-    const projectId = env.VITE_FIREBASE_PROJECT_ID;
+  // Vite 표준 환경변수 주입 방식을 사용하여 안정성을 확보합니다.
+  const apiKey = import.meta.env.VITE_FIREBASE_API_KEY;
+  const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+  const appId = import.meta.env.VITE_FIREBASE_APP_ID;
+
+  if (apiKey && projectId) {
     return {
-      apiKey: env.VITE_FIREBASE_API_KEY,
+      apiKey: apiKey,
       authDomain: `${projectId}.firebaseapp.com`,
       projectId: projectId,
       storageBucket: `${projectId}.appspot.com`,
-      appId: env.VITE_FIREBASE_APP_ID || '',
+      appId: appId || '',
       databaseURL: `https://${projectId}://firebaseio.com`
     };
   }
-
   return null;
 }
 
@@ -61,13 +60,7 @@ export function initFirebaseApp(forceReinit = false): {
 
   const config = getStoredFirebaseConfig();
   if (!config || !config.apiKey || !config.projectId) {
-    return {
-      app: null,
-      db: null,
-      rtdb: null,
-      auth: null,
-      isConnected: false,
-    };
+    return { app: null, db: null, rtdb: null, auth: null, isConnected: false };
   }
 
   try {
@@ -76,25 +69,7 @@ export function initFirebaseApp(forceReinit = false): {
     } else {
       firebaseAppInstance = getApp();
     }
-
     firestoreDbInstance = getFirestore(firebaseAppInstance);
-    
-    // 오프라인 캐시 지속성 유지 (실패해도 정상 작동하도록 보완)
-    try {
-      if (typeof window !== 'undefined') {
-        enableIndexedDbPersistence(firestoreDbInstance).catch(() => {});
-      }
-    } catch {}
-
-    try {
-      realtimeDbInstance = getDatabase(firebaseAppInstance);
-    } catch {}
-
-    try {
-      firebaseAuthInstance = getAuth(firebaseAppInstance);
-      firebaseAuthInstance.languageCode = 'ko';
-    } catch {}
-
     isInitialized = true;
     return {
       app: firebaseAppInstance,
@@ -104,18 +79,11 @@ export function initFirebaseApp(forceReinit = false): {
       isConnected: true,
     };
   } catch (err) {
-    console.error('Firebase initialization failed:', err);
-    return {
-      app: null,
-      db: null,
-      rtdb: null,
-      auth: null,
-      isConnected: false,
-    };
+    console.error('Firebase init failed:', err);
+    return { app: null, db: null, rtdb: null, auth: null, isConnected: false };
   }
 }
 
-// 초기 부트스트랩 시도
 const initialSetup = initFirebaseApp();
 export const firebaseApp = initialSetup.app;
 export const firestoreDb = initialSetup.db;
