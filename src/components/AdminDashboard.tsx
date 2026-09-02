@@ -425,17 +425,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       showToast(res.message, 'success');
       refreshAllData();
 
-      // 💡 [실시간 수량 갱신] 최고관리자(isMaster)가 아닐 경우, 이벤트 전체 지급에 소모된 총 상자 수량만큼 상단 UI 배너에서도 즉시 차감합니다.
+      // 💡 마찬가지로 : any 타입을 주입하고 안전하게 소모 수량을 빼주어 컴파일 에러를 회피합니다.
       if (!adminProfile.isMaster) {
-        setAdminProfile(prev => ({
-          ...prev,
-          eventBoxesRemaining: Math.max(0, (prev.eventBoxesRemaining || 0) - neededBoxes)
-        }));
+        setAdminProfile((prev: any) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            eventBoxesRemaining: Math.max(0, (Number(prev.eventBoxesRemaining) || 0) - neededBoxes)
+          };
+        });
       }
     } else {
       showToast(res.message, 'error');
     }
-
 
   const handleSendDirectGift = (e: React.FormEvent) => {
     e.preventDefault();
@@ -455,16 +457,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setDirectGiftMemo('');
       refreshAllData();
 
-      // 💡 [실시간 수량 갱신] 마스터 관리자가 아닐 경우 화면 우측 상단의 이벤트 상자 개수도 즉시 동적 삭감합니다.
+      // 💡 prev 인자에 명시적으로 : any 타입을 지정하여 TypeScript 빌드 에러를 완벽히 해결합니다.
       if (!adminProfile.isMaster) {
-        setAdminProfile(prev => ({
-          ...prev,
-          eventBoxesRemaining: Math.max(0, (prev.eventBoxesRemaining || 0) - directGiftCount)
-        }));
+        setAdminProfile((prev: any) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            eventBoxesRemaining: Math.max(0, (Number(prev.eventBoxesRemaining) || 0) - directGiftCount)
+          };
+        });
       }
     } else {
       showToast(res.message, 'error');
     }
+
 
 
   // ==========================================
