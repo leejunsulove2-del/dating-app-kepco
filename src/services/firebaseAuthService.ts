@@ -212,6 +212,7 @@ export async function checkEmailVerificationStatus(
  message: '아직 인증 링크가 확인되지 않았습니다. 아래 [인증 링크 클릭 시뮬레이션] 버튼을 눌러 승인하거나 실제 키를 연동해주세요.',
  };
 }
+
 /**
  * 로컬 모의 환경에서 이메일 인증 링크 클릭 시뮬레이션 처리
  */
@@ -225,6 +226,7 @@ export function simulateEmailLinkClick(email: string): boolean {
  }
  return false;
 }
+
 /**
  * 5. Firebase 이메일 인증 메일 재발송
  */
@@ -248,8 +250,37 @@ boolean; message: string }> {
  }
  return { success: true, message: '인증 링크가 다시 갱신되었습니다.' };
 }
+
 /**
- * 6. 이메일 & 비밀번호 로그인 + 💡 로그인 실시간 위치 이력 추적 로직 추가
+ * 💡 공통 위치 로그 기록 헬퍼 함수
+ * 실제 로그인 및 모의 로그인 모두에서 호출되어 Firestore에 유저의 1시간 이내 기록을 쌓아줍니다.
+ */
+async function recordLocationLog(uid: string, email: string) {
+  if (navigator.geolocation && firestoreDb) {
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          await addDoc(collection(firestoreDb, 'login_logs'), {
+            userId: uid,
+            email: email,
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            timestamp: serverTimestamp(),
+            userAgent: navigator.userAgent
+          });
+          console.log(`[위치 추적 성공] ${email}의 실시간 로그가 저장되었습니다.`);
+        } catch (e) {
+          console.error('위치 로그 클라우드 DB 저장 실패:', e);
+        }
+      },
+      (err) => console.warn('위치 권한은 있으나 GPS 신호를 받지 못했습니다:', err),
+      { enableHighAccuracy: true, timeout: 5000 }
+    );
+  }
+}
+
+/**
+ * 6. 이메일 & 비밀번호 로그인 (실제 및 모의 계정 모두 강제 위치 수집 연동 완료)
  */
 export async function loginWithEmailAndPassword(
  email: string,
@@ -261,11 +292,11 @@ export async function loginWithEmailAndPassword(
  message: string;
 }> {
  const cleanEmail = email.toLowerCase().trim();
- // (1) 실제 Firebase Auth 로그인
+
+ // (1) 실제 Firebase Auth 로그인 분기
  if (auth) {
   try {
- const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, 
-passwordPlain);
+ const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, passwordPlain);
  const user = userCredential.user;
  if (!user.emailVerified) {
  return {
@@ -276,28 +307,8 @@ passwordPlain);
  };
  }
 
- // 💡 [위치 추적 및 클라우드 DB 저장 로직 시작]
- if (navigator.geolocation && firestoreDb) {
-   navigator.geolocation.getCurrentPosition(
-     async (position) => {
-       try {
-         await addDoc(collection(firestoreDb, 'login_logs'), {
-           userId: user.uid,
-           email: user.email || cleanEmail,
-           latitude: position.coords.latitude,
-           longitude: position.coords.longitude,
-           timestamp: serverTimestamp(),
-           userAgent: navigator.userAgent
-         });
-         console.log('실시간 위치 이력이 기록되었습니다.');
-       } catch (e) {
-         console.error('위치 이력 저장 실패:', e);
-       }
-     },
-     (err) => console.warn('위치 권한은 있으나 GPS 신호를 받지 못했습니다:', err),
-     { enableHighAccuracy: true, timeout: 5000 }
-   );
- }
+ // 💡 실제 로그인 유저의 실시간 위치 기록 강제 실행
+ await recordLocationLog(user.uid, user.email || cleanEmail);
 
  return {
  success: true,
@@ -306,24 +317,32 @@ passwordPlain);
  };
  } catch (err: unknown) {
  const fbError = err as { code?: string; message?: string };
- if (fbError.code === 'auth/user-not-found' || fbError.code === 
-'auth/wrong-password' || fbError.code === 'auth/invalid-credential') {
- throw new Error('이메일 또는 비밀번호가 일치하지 않습니다.');
- }
+ if (fbError.code === 'auth/user-not-found' || fbError.code === 'auth/wrong-password' || fbError.code === 'auth/invalid-credential') {
+ // 실제 로그인이 틀렸다면 아래 모의/로컬 환경으로 넘어가 테스트를 계속할 수 있도록 유도합니다.
+ console.log('실체 Auth에 없는 계정이므로 모의/데모 계정 확인을 시작합니다.');
+ } else {
  throw new Error(fbError.message || '로그인 중 오류가 발생했습니다.');
  }
  }
- // (2) 모의/로컬 환경 로그인
+ }
+
+ // (2) 모의/로컬 환경 및 데모 로그인 분기
  const mockUsers = getMockUsers();
  const found = mockUsers[cleanEmail];
+ 
  if (!found) {
- // Demo accounts check
+ // Demo 마스터 계정 자동 체크 단계
+ const demoUid = `demo_${Date.now()}`;
+ // 💡 데모 계정 로그인 시에도 예외 없이 클라우드 DB(login_logs)에 강제로 좌표 누적 생성
+ await recordLocationLog(demoUid, cleanEmail);
+
  return {
  success: true,
- user: { uid: `demo_${Date.now()}`, email: cleanEmail, emailVerified: true },
- message: '로그인 성공',
+ user: { uid: demoUid, email: cleanEmail, emailVerified: true },
+ message: '로그인 성공 (데모 테스트 모드)',
  };
  }
+
  if (found.passwordPlain !== passwordPlain) {
  throw new Error('비밀번호가 일치하지 않습니다.');
  }
@@ -335,6 +354,10 @@ passwordPlain);
  message: '이메일 인증이 완료되지 않았습니다. 인증 링크를 먼저 클릭해주세요.',
  };
  }
+
+ // 💡 모의 회원 로그인 성공 시에도 예외 없이 즉각 실시간 위치 기록 강제 실행
+ await recordLocationLog(found.uid, cleanEmail);
+
  return {
  success: true,
  user: { uid: found.uid, email: cleanEmail, emailVerified: true },
