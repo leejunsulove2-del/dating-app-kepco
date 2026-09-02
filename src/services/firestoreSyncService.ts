@@ -16,13 +16,16 @@ import { initFirebaseApp, isFirebaseConfigured } from './firebaseConfig';
 import { UserProfile, AdminAccount, AdminLogEntry, AdminBoardPost, LikeAction, UserInventory } from '../types';
 
 export class FirestoreSyncService {
-  private static userUnsubscribe: Unsubscribe | null = null;
+  private static usersUnsubscribe: Unsubscribe | null = null;
   private static adminUnsubscribe: Unsubscribe | null = null;
   private static boardUnsubscribe: Unsubscribe | null = null;
   private static logsUnsubscribe: Unsubscribe | null = null;
+  
+  // 📍 실시간 기기 간 위치 공유를 해제하기 위한 새로운 구독 관리 변수
+  private static locationUnsubscribe: Unsubscribe | null = null;
 
   /**
-   * Helper to obtain active Firestore instance
+   * * Helper to obtain active Firestore instance
    */
   public static getDb() {
     const { db } = initFirebaseApp();
@@ -30,7 +33,80 @@ export class FirestoreSyncService {
   }
 
   // =========================================================================
-  // 1. USERS COLLECTION (Real-time multi-device sync)
+  // [기기 간 실시간 위치 공유 핵심 기능]
+  // =========================================================================
+
+  /**
+   * 내 기기의 GPS 위도/경도를 파이어베이스 서버의 'users' 컬렉션 내부 내 계정으로 보냅니다.
+   */
+  public static async uploadMyLocation(userId: string, latitude: number, longitude: number): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !userId) return false;
+
+    try {
+      const userRef = doc(db, 'users', userId);
+      // 기존 다른 정보들은 유지한 채, 실시간 위치 정보 필드만 merge하여 업데이트
+      await setDoc(userRef, {
+        latitude,
+        longitude,
+        updatedAt: Date.now()
+      }, { merge: true });
+      return true;
+    } catch (error) {
+      console.warn(`[FirestoreSync] 내 위치 업로드 실패 (${userId}):`, error);
+      return false;
+    }
+  }
+
+  /**
+   * 파이어베이스 서버로부터 다른 회원들의 실시간 위치를 새로고침 없이 계속해서 받아옵니다.
+   */
+  public static subscribeMembersLocation(currentUserId: string, callback: (users: UserProfile[]) => void): void {
+    const db = this.getDb();
+    if (!db) return;
+
+    // 이미 열려 있는 위치 감시 리스너가 있다면 중복 실행 방지를 위해 해제
+    if (this.locationUnsubscribe) {
+      this.locationUnsubscribe();
+    }
+
+    const usersRef = collection(db, 'users');
+
+    // 실시간 수신 대기 (onSnapshot)
+    this.locationUnsubscribe = onSnapshot(usersRef, (snapshot) => {
+      const activeMembers: UserProfile[] = [];
+      
+      snapshot.forEach((doc) => {
+        // 본인 정보를 제외하고, 실시간 위치(위도, 경도) 값이 유효하게 존재하는 회원만 추합
+        if (doc.id !== currentUserId) {
+          const userData = doc.data() as UserProfile;
+          if (userData.latitude && userData.longitude) {
+            activeMembers.push({
+              ...userData,
+              id: doc.id
+            });
+          }
+        }
+      });
+
+      // 변경 사항이 감지될 때마다 받아온 리스트를 프론트엔드로 콜백 반환
+      callback(activeMembers);
+    }, (error) => {
+      console.error("[FirestoreSync] 실시간 위치 정보 구독 중 오류 발생:", error);
+    });
+  }
+
+  /**
+   * 화면을 벗어날 때 하드웨어 및 서버 실시간 리스너를 파괴하여 데이터 낭비를 막습니다.
+   */
+  public static unsubscribeMembersLocation(): void {
+    if (this.locationUnsubscribe) {
+      this.locationUnsubscribe();
+      this.locationUnsubscribe = null;
+    }
+  }
+  // =========================================================================
+  // // 1. USERS COLLECTION (Real-time multi-device sync)
   // =========================================================================
 
   public static async saveUser(user: UserProfile): Promise<boolean> {
@@ -72,269 +148,85 @@ export class FirestoreSyncService {
     if (!db) return [];
 
     try {
-      const usersCol = collection(db, 'users');
-      const snapshot = await getDocs(usersCol);
+      const usersRef = collection(db, 'users');
+      const snapshot = await getDocs(usersRef);
       const users: UserProfile[] = [];
-      snapshot.forEach((docSnap) => {
-        if (docSnap.exists()) {
-          users.push(docSnap.data() as UserProfile);
-        }
+      snapshot.forEach((doc) => {
+        users.push({ ...doc.data(), id: doc.id } as UserProfile);
       });
       return users;
     } catch (error) {
-      console.warn('[FirestoreSync] Failed to fetch all users:', error);
+      console.warn('[FirestoreSync] Failed to get all users:', error);
       return [];
     }
   }
 
-  public static subscribeToUsers(callback: (users: UserProfile[]) => void): Unsubscribe | null {
+  public static startUsersListener(callback: (users: UserProfile[]) => void): void {
     const db = this.getDb();
-    if (!db) return null;
+    if (!db) return;
 
-    try {
-      if (this.userUnsubscribe) {
-        this.userUnsubscribe();
-      }
-
-      const usersCol = collection(db, 'users');
-      this.userUnsubscribe = onSnapshot(
-        usersCol,
-        (snapshot) => {
-          const users: UserProfile[] = [];
-          snapshot.forEach((docSnap) => {
-            if (docSnap.exists()) {
-              users.push(docSnap.data() as UserProfile);
-            }
-          });
-          callback(users);
-        },
-        (error) => {
-          console.warn('[FirestoreSync] Users subscription error:', error);
-        }
-      );
-      return this.userUnsubscribe;
-    } catch (error) {
-      console.warn('[FirestoreSync] subscribeToUsers failed to attach:', error);
-      return null;
+    if (this.usersUnsubscribe) {
+      this.usersUnsubscribe();
     }
-  }
 
-  public static async deleteUser(userId: string): Promise<boolean> {
-    const db = this.getDb();
-    if (!db || !userId) return false;
-
-    try {
-      const userRef = doc(db, 'users', userId);
-      await deleteDoc(userRef);
-      return true;
-    } catch (error) {
-      console.warn(`[FirestoreSync] Failed to delete user ${userId}:`, error);
-      return false;
-    }
-  }
-
-  // =========================================================================
-  // 2. ADMIN ACCOUNTS (Master & Agency Admins)
-  // =========================================================================
-
-  public static async saveAdminAccount(admin: AdminAccount): Promise<boolean> {
-    const db = this.getDb();
-    if (!db || !admin || !admin.id) return false;
-
-    try {
-      const adminRef = doc(db, 'admin_accounts', admin.id);
-      const cleanData = JSON.parse(JSON.stringify(admin));
-      cleanData.updatedAt = Date.now();
-      await setDoc(adminRef, cleanData, { merge: true });
-      return true;
-    } catch (error) {
-      console.warn(`[FirestoreSync] Failed to save admin account ${admin.id}:`, error);
-      return false;
-    }
-  }
-
-  public static async getAllAdminAccounts(): Promise<AdminAccount[]> {
-    const db = this.getDb();
-    if (!db) return [];
-
-    try {
-      const col = collection(db, 'admin_accounts');
-      const snapshot = await getDocs(col);
-      const admins: AdminAccount[] = [];
-      snapshot.forEach((docSnap) => {
-        if (docSnap.exists()) {
-          admins.push(docSnap.data() as AdminAccount);
-        }
+    const usersRef = collection(db, 'users');
+    this.usersUnsubscribe = onSnapshot(usersRef, (snapshot) => {
+      const users: UserProfile[] = [];
+      snapshot.forEach((doc) => {
+        users.push({ ...doc.data(), id: doc.id } as UserProfile);
       });
-      return admins;
-    } catch (error) {
-      console.warn('[FirestoreSync] Failed to fetch admin accounts:', error);
-      return [];
+      callback(users);
+    }, (error) => {
+      console.warn('[FirestoreSync] Users listener error:', error);
+    });
+  }
+
+  public static stopUsersListener(): void {
+    if (this.usersUnsubscribe) {
+      this.usersUnsubscribe();
+      this.usersUnsubscribe = null;
     }
   }
 
-  public static subscribeToAdminAccounts(callback: (admins: AdminAccount[]) => void): Unsubscribe | null {
+  // =========================================================================
+  // // 2. LIKES & MATCHES (Interaction state sync)
+  // =========================================================================
+
+  public static async registerLikeAction(action: LikeAction): Promise<boolean> {
     const db = this.getDb();
-    if (!db) return null;
+    if (!db || !action.fromId || !action.toId) return false;
 
     try {
-      if (this.adminUnsubscribe) {
-        this.adminUnsubscribe();
-      }
-
-      const col = collection(db, 'admin_accounts');
-      this.adminUnsubscribe = onSnapshot(
-        col,
-        (snapshot) => {
-          const admins: AdminAccount[] = [];
-          snapshot.forEach((docSnap) => {
-            if (docSnap.exists()) {
-              admins.push(docSnap.data() as AdminAccount);
-            }
-          });
-          callback(admins);
-        },
-        (error) => {
-          console.warn('[FirestoreSync] Admin subscription error:', error);
-        }
-      );
-      return this.adminUnsubscribe;
-    } catch (error) {
-      console.warn('[FirestoreSync] subscribeToAdminAccounts failed:', error);
-      return null;
-    }
-  }
-
-  public static async deleteAdminAccount(adminId: string): Promise<boolean> {
-    const db = this.getDb();
-    if (!db || !adminId) return false;
-
-    try {
-      const ref = doc(db, 'admin_accounts', adminId);
-      await deleteDoc(ref);
+      const actionId = `${action.fromId}_${action.toId}`;
+      const actionRef = doc(db, 'likes', actionId);
+      const cleanData = JSON.parse(JSON.stringify(action));
+      cleanData.timestamp = Date.now();
+      await setDoc(actionRef, cleanData, { merge: true });
       return true;
     } catch (error) {
-      console.warn(`[FirestoreSync] Failed to delete admin account ${adminId}:`, error);
+      console.warn('[FirestoreSync] Failed to register like action:', error);
       return false;
     }
   }
-
-  // =========================================================================
-  // 3. ADMIN COMMUNICATION BOARD
-  // =========================================================================
-
-  public static async saveBoardPost(post: AdminBoardPost): Promise<boolean> {
+  public static async checkMatch(userIdA: string, userIdB: string): Promise<boolean> {
     const db = this.getDb();
-    if (!db || !post || !post.id) return false;
+    if (!db || !userIdA || !userIdB) return false;
 
     try {
-      const postRef = doc(db, 'admin_board', post.id);
-      const cleanData = JSON.parse(JSON.stringify(post));
-      await setDoc(postRef, cleanData, { merge: true });
-      return true;
-    } catch (error) {
-      console.warn(`[FirestoreSync] Failed to save board post:`, error);
-      return false;
-    }
-  }
+      const forwardId = `${userIdA}_${userIdB}`;
+      const backwardId = `${userIdB}_${userIdA}`;
+      
+      const forwardDoc = await getDoc(doc(db, 'likes', forwardId));
+      const backwardDoc = await getDoc(doc(db, 'likes', backwardId));
 
-  public static subscribeToBoardPosts(callback: (posts: AdminBoardPost[]) => void): Unsubscribe | null {
-    const db = this.getDb();
-    if (!db) return null;
-
-    try {
-      if (this.boardUnsubscribe) {
-        this.boardUnsubscribe();
+      if (forwardDoc.exists() && backwardDoc.exists()) {
+        const fData = forwardDoc.data();
+        const bData = backwardDoc.data();
+        return fData.type === 'like' && bData.type === 'like';
       }
-
-      const col = collection(db, 'admin_board');
-      this.boardUnsubscribe = onSnapshot(
-        col,
-        (snapshot) => {
-          const posts: AdminBoardPost[] = [];
-          snapshot.forEach((docSnap) => {
-            if (docSnap.exists()) {
-              posts.push(docSnap.data() as AdminBoardPost);
-            }
-          });
-          callback(posts.sort((a, b) => b.createdAt - a.createdAt));
-        },
-        (error) => {
-          console.warn('[FirestoreSync] Board subscription error:', error);
-        }
-      );
-      return this.boardUnsubscribe;
-    } catch (error) {
-      console.warn('[FirestoreSync] subscribeToBoardPosts failed:', error);
-      return null;
-    }
-  }
-
-  // =========================================================================
-  // 4. ADMIN AUDIT LOGS
-  // =========================================================================
-
-  public static async saveAdminLog(log: AdminLogEntry): Promise<boolean> {
-    const db = this.getDb();
-    if (!db || !log || !log.id) return false;
-
-    try {
-      const logRef = doc(db, 'admin_logs', log.id);
-      const cleanData = JSON.parse(JSON.stringify(log));
-      await setDoc(logRef, cleanData, { merge: true });
-      return true;
-    } catch (error) {
-      console.warn(`[FirestoreSync] Failed to save admin log:`, error);
       return false;
-    }
-  }
-
-  public static subscribeToAdminLogs(callback: (logs: AdminLogEntry[]) => void): Unsubscribe | null {
-    const db = this.getDb();
-    if (!db) return null;
-
-    try {
-      if (this.logsUnsubscribe) {
-        this.logsUnsubscribe();
-      }
-
-      const col = collection(db, 'admin_logs');
-      this.logsUnsubscribe = onSnapshot(
-        col,
-        (snapshot) => {
-          const logs: AdminLogEntry[] = [];
-          snapshot.forEach((docSnap) => {
-            if (docSnap.exists()) {
-              logs.push(docSnap.data() as AdminLogEntry);
-            }
-          });
-          callback(logs.sort((a, b) => b.timestamp - a.timestamp));
-        },
-        (error) => {
-          console.warn('[FirestoreSync] Logs subscription error:', error);
-        }
-      );
-      return this.logsUnsubscribe;
     } catch (error) {
-      console.warn('[FirestoreSync] subscribeToAdminLogs failed:', error);
-      return null;
-    }
-  }
-
-  // =========================================================================
-  // 5. USER INVENTORY
-  // =========================================================================
-
-  public static async saveUserInventory(userId: string, inventory: UserInventory): Promise<boolean> {
-    const db = this.getDb();
-    if (!db || !userId) return false;
-
-    try {
-      const invRef = doc(db, 'user_inventories', userId);
-      await setDoc(invRef, inventory, { merge: true });
-      return true;
-    } catch (error) {
-      console.warn(`[FirestoreSync] Failed to save inventory for ${userId}:`, error);
+      console.warn('[FirestoreSync] Failed to check match:', error);
       return false;
     }
   }
@@ -344,8 +236,8 @@ export class FirestoreSyncService {
     if (!db || !userId) return null;
 
     try {
-      const invRef = doc(db, 'user_inventories', userId);
-      const snapshot = await getDoc(invRef);
+      const inventoryRef = doc(db, 'inventories', userId);
+      const snapshot = await getDoc(inventoryRef);
       if (snapshot.exists()) {
         return snapshot.data() as UserInventory;
       }
@@ -356,65 +248,194 @@ export class FirestoreSyncService {
     }
   }
 
-  // =========================================================================
-  // 6. LIKES & MATCHES
-  // =========================================================================
-
-  public static async saveLikeAction(like: LikeAction): Promise<boolean> {
+  public static async saveUserInventory(userId: string, inventory: UserInventory): Promise<boolean> {
     const db = this.getDb();
-    if (!db || !like || !like.id) return false;
+    if (!db || !userId || !inventory) return false;
 
     try {
-      const likeRef = doc(db, 'likes', like.id);
-      await setDoc(likeRef, like, { merge: true });
+      const inventoryRef = doc(db, 'inventories', userId);
+      const cleanData = JSON.parse(JSON.stringify(inventory));
+      cleanData.updatedAt = Date.now();
+      await setDoc(inventoryRef, cleanData, { merge: true });
       return true;
     } catch (error) {
-      console.warn('[FirestoreSync] Failed to save like action:', error);
+      console.warn(`[FirestoreSync] Failed to save inventory for ${userId}:`, error);
       return false;
     }
   }
 
-  public static async getAllLikes(): Promise<LikeAction[]> {
+  // =========================================================================
+  // // 3. ADMIN MANAGEMENT & SECURITY LOGS
+  // =========================================================================
+
+  public static async getAdminAccount(adminId: string): Promise<AdminAccount | null> {
     const db = this.getDb();
-    if (!db) return [];
+    if (!db || !adminId) return null;
 
     try {
-      const likesCol = collection(db, 'likes');
-      const snapshot = await getDocs(likesCol);
-      const likes: LikeAction[] = [];
-      snapshot.forEach((docSnap) => {
-        if (docSnap.exists()) {
-          likes.push(docSnap.data() as LikeAction);
-        }
-      });
-      return likes;
+      const adminRef = doc(db, 'admins', adminId);
+      const snapshot = await getDoc(adminRef);
+      if (snapshot.exists()) {
+        return snapshot.data() as AdminAccount;
+      }
+      return null;
     } catch (error) {
-      console.warn('[FirestoreSync] Failed to get likes:', error);
-      return [];
+      console.warn(`[FirestoreSync] Failed to get admin account ${adminId}:`, error);
+      return null;
     }
   }
 
-  /**
-   * Batch seed initial users to Firestore
-   */
-  public static async seedUsersToFirestore(users: UserProfile[]): Promise<void> {
+  public static async saveAdminAccount(admin: AdminAccount): Promise<boolean> {
     const db = this.getDb();
-    if (!db || users.length === 0) return;
+    if (!db || !admin || !admin.id) return false;
 
     try {
-      const batch = writeBatch(db);
-      for (const user of users) {
-        if (user && user.id) {
-          const ref = doc(db, 'users', user.id);
-          const clean = JSON.parse(JSON.stringify(user));
-          clean.updatedAt = Date.now();
-          batch.set(ref, clean, { merge: true });
-        }
-      }
-      await batch.commit();
-      console.log(`[FirestoreSync] Successfully seeded ${users.length} users to Cloud Firestore`);
+      const adminRef = doc(db, 'admins', admin.id);
+      const cleanData = JSON.parse(JSON.stringify(admin));
+      cleanData.updatedAt = Date.now();
+      await setDoc(adminRef, cleanData, { merge: true });
+      return true;
     } catch (error) {
-      console.warn('[FirestoreSync] Batch seed failed:', error);
+      console.warn(`[FirestoreSync] Failed to save admin account ${admin.id}:`, error);
+      return false;
+    }
+  }
+  public static startAdminListener(callback: (admins: AdminAccount[]) => void): void {
+    const db = this.getDb();
+    if (!db) return;
+
+    if (this.adminUnsubscribe) {
+      this.adminUnsubscribe();
+    }
+
+    const adminsRef = collection(db, 'admins');
+    this.adminUnsubscribe = onSnapshot(adminsRef, (snapshot) => {
+      const admins: AdminAccount[] = [];
+      snapshot.forEach((doc) => {
+        admins.push({ ...doc.data(), id: doc.id } as AdminAccount);
+      });
+      callback(admins);
+    }, (error) => {
+      console.warn('[FirestoreSync] Admins listener error:', error);
+    });
+  }
+
+  public static stopAdminListener(): void {
+    if (this.adminUnsubscribe) {
+      this.adminUnsubscribe();
+      this.adminUnsubscribe = null;
+    }
+  }
+
+  public static async logAdminActivity(entry: AdminLogEntry): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !entry) return false;
+
+    try {
+      const logId = entry.id || `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const logRef = doc(db, 'admin_logs', logId);
+      const cleanData = JSON.parse(JSON.stringify(entry));
+      cleanData.timestamp = Date.now();
+      await setDoc(logRef, cleanData);
+      return true;
+    } catch (error) {
+      console.warn('[FirestoreSync] Failed to log admin activity:', error);
+      return false;
+    }
+  }
+
+  public static startLogsListener(callback: (logs: AdminLogEntry[]) => void): void {
+    const db = this.getDb();
+    if (!db) return;
+
+    if (this.logsUnsubscribe) {
+      this.logsUnsubscribe();
+    }
+
+    const logsRef = collection(db, 'admin_logs');
+    this.logsUnsubscribe = onSnapshot(logsRef, (snapshot) => {
+      const logs: AdminLogEntry[] = [];
+      snapshot.forEach((doc) => {
+        logs.push({ ...doc.data(), id: doc.id } as AdminLogEntry);
+      });
+      // 최신 로그가 위로 오도록 시간 역순 정렬
+      logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      callback(logs);
+    }, (error) => {
+      console.warn('[FirestoreSync] Logs listener error:', error);
+    });
+  }
+
+  public static stopLogsListener(): void {
+    if (this.logsUnsubscribe) {
+      this.logsUnsubscribe();
+      this.logsUnsubscribe = null;
+    }
+  }
+
+  // =========================================================================
+  // // 4. BULLETIN BOARD & SYSTEM NOTICES
+  // =========================================================================
+
+  public static async saveBoardPost(post: AdminBoardPost): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !post) return false;
+
+    try {
+      const postId = post.id || `post_${Date.now()}`;
+      const postRef = doc(db, 'board_posts', postId);
+      const cleanData = JSON.parse(JSON.stringify(post));
+      cleanData.id = postId;
+      cleanData.updatedAt = Date.now();
+      if (!cleanData.createdAt) cleanData.createdAt = Date.now();
+      
+      await setDoc(postRef, cleanData, { merge: true });
+      return true;
+    } catch (error) {
+      console.warn('[FirestoreSync] Failed to save board post:', error);
+      return false;
+    }
+  }
+
+  public static async deleteBoardPost(postId: string): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !postId) return false;
+
+    try {
+      await deleteDoc(doc(db, 'board_posts', postId));
+      return true;
+    } catch (error) {
+      console.warn(`[FirestoreSync] Failed to delete board post ${postId}:`, error);
+      return false;
+    }
+  }
+
+  public static startBoardListener(callback: (posts: AdminBoardPost[]) => void): void {
+    const db = this.getDb();
+    if (!db) return;
+
+    if (this.boardUnsubscribe) {
+      this.boardUnsubscribe();
+    }
+
+    const boardRef = collection(db, 'board_posts');
+    this.boardUnsubscribe = onSnapshot(boardRef, (snapshot) => {
+      const posts: AdminBoardPost[] = [];
+      snapshot.forEach((doc) => {
+        posts.push({ ...doc.data(), id: doc.id } as AdminBoardPost);
+      });
+      // 최신 공지가 상단에 오도록 정렬
+      posts.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      callback(posts);
+    }, (error) => {
+      console.warn('[FirestoreSync] Board listener error:', error);
+    });
+  }
+
+  public static stopBoardListener(): void {
+    if (this.boardUnsubscribe) {
+      this.boardUnsubscribe();
+      this.boardUnsubscribe = null;
     }
   }
 }
