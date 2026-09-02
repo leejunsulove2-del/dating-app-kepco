@@ -553,32 +553,42 @@ export class DatingService {
    * Listen to live real-time user updates across all devices
    */
   public static subscribeToLiveUsers(callback?: (users: UserProfile[]) => void): () => void {
-    const cloudUsers = this.cloudLiveUsers && this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
-    const localUsers = this.getAllUsers() || [];
-    const mergedMap = new Map<string, UserProfile>();
+    const unsub = FirestoreSyncService.subscribeToUsers((cloudUsers) => {
+      if (cloudUsers && cloudUsers.length > 0) {
+        const localUsers = this.getAllUsers();
+        const mergedMap = new Map<string, UserProfile>();
 
-    for (const u of localUsers) {
-      if (u && u.id) mergedMap.set(u.id, u);
-    }
-    for (const cu of cloudUsers) {
-      if (cu && cu.id) mergedMap.set(cu.id, cu);
-    }
+        for (const u of localUsers) {
+          if (u && u.id) mergedMap.set(u.id, u);
+        }
 
-    const mergedList = Array.from(mergedMap.values());
-    localStorage.setItem('dating_app_all_users', JSON.stringify(mergedList));
+        for (const cu of cloudUsers) {
+          if (cu && cu.id) {
+            mergedMap.set(cu.id, cu);
+          }
+        }
 
-    const curUser = this.getCurrentUser();
-    if (curUser) {
-      const updatedCur = mergedMap.get(curUser.id);
-      if (updatedCur) {
-        localStorage.setItem('dating_app_current_user', JSON.stringify(updatedCur));
+        const mergedList = Array.from(mergedMap.values());
+        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+
+        // If current user updated on cloud (e.g. approved by admin on another device)
+        const curUser = this.getCurrentUser();
+        if (curUser) {
+          const updatedCur = mergedMap.get(curUser.id);
+          if (updatedCur) {
+            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedCur));
+          }
+        }
+
+        if (callback) {
+          callback(mergedList);
+        }
       }
-    }
+    });
 
-    if (callback) {
-      callback(mergedList);
-    }
-    return () => {};
+    return () => {
+      if (unsub) unsub();
+    };
   }
 
 
