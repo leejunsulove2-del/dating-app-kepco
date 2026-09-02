@@ -14,6 +14,7 @@ const MESSAGES_STORAGE_KEY = 'love_app_messages';
 const VERIFICATION_CODES_KEY = 'love_app_email_verifications';
 const USER_PASSWORDS_KEY = 'love_app_user_passwords';
 const ALLOWED_DOMAINS_KEY = 'love_app_allowed_email_domains';
+const BLOCKED_USERS_PREFIX = 'love_app_blocked_users_';
 
 export interface AllowedDomainItem {
   domain: string;
@@ -721,6 +722,19 @@ export class DatingService {
           return false;
         }
 
+        // Sanction & Ban Check: Exclude banned or temporarily sanctioned users
+        if (user.isBanned) {
+          return false;
+        }
+        if (user.sanctionExpiresAt && user.sanctionExpiresAt > Date.now()) {
+          return false;
+        }
+
+        // Blocked Check: Exclude users blocked by current user
+        if (this.isUserBlocked(currentUserId, user.id)) {
+          return false;
+        }
+
         seenIds.add(user.id);
         return true;
       })
@@ -741,6 +755,40 @@ export class DatingService {
       })
       .filter((user) => user.distanceKm! <= filter.maxDistanceKm)
       .sort((a, b) => (a.distanceKm || 0) - (b.distanceKm || 0));
+  }
+
+  /**
+   * Blocked Users Management (부적절한 사용자 차단 및 관리)
+   */
+  public static getBlockedUserIds(currentUserId: string): string[] {
+    if (!currentUserId) return [];
+    try {
+      const json = localStorage.getItem(`${BLOCKED_USERS_PREFIX}${currentUserId}`);
+      return json ? JSON.parse(json) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public static blockUser(currentUserId: string, targetUserId: string): void {
+    if (!currentUserId || !targetUserId || currentUserId === targetUserId) return;
+    const blocked = this.getBlockedUserIds(currentUserId);
+    if (!blocked.includes(targetUserId)) {
+      blocked.push(targetUserId);
+      localStorage.setItem(`${BLOCKED_USERS_PREFIX}${currentUserId}`, JSON.stringify(blocked));
+    }
+  }
+
+  public static unblockUser(currentUserId: string, targetUserId: string): void {
+    if (!currentUserId || !targetUserId) return;
+    const blocked = this.getBlockedUserIds(currentUserId).filter((id) => id !== targetUserId);
+    localStorage.setItem(`${BLOCKED_USERS_PREFIX}${currentUserId}`, JSON.stringify(blocked));
+  }
+
+  public static isUserBlocked(currentUserId: string, targetUserId: string): boolean {
+    if (!currentUserId || !targetUserId) return false;
+    const blocked = this.getBlockedUserIds(currentUserId);
+    return blocked.includes(targetUserId);
   }
 
   /**

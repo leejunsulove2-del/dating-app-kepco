@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Heart, MessageCircle, Building2, MapPin, Sparkles, Calendar, ShieldCheck, ThumbsUp, ThumbsDown, Plus, Flame, Tag, Type, Check, ShieldAlert } from 'lucide-react';
+import { X, Heart, MessageCircle, Building2, MapPin, Sparkles, Calendar, ShieldCheck, ThumbsUp, ThumbsDown, Plus, Flame, Tag, Type, Check, ShieldAlert, UserX } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { UserProfile, ProfileSticker } from '../types';
 import { formatDistance, getUserActiveStatus } from '../utils/geo';
@@ -43,6 +43,10 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
   const [stickerNotice, setStickerNotice] = useState<string | null>(null);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [reportSuccessNotice, setReportSuccessNotice] = useState<string | null>(null);
+  const [isBlocked, setIsBlocked] = useState<boolean>(() => {
+    return user ? DatingService.isUserBlocked(currentUserId, user.id) : false;
+  });
+  const [blockNotice, setBlockNotice] = useState<string | null>(null);
 
   // Synchronize state whenever user profile or currentUserId changes
   useEffect(() => {
@@ -52,16 +56,22 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
       const stickerRes = DatingService.getProfileStickers(currentUserId, user.id);
       setStickers(stickerRes.stickers);
       setMyGivenStickers(stickerRes.myGivenStickers);
+      setIsBlocked(DatingService.isUserBlocked(currentUserId, user.id));
       setIsStickerPickerOpen(false);
       setStickerTab('preset');
       setCustomText('');
       setPopularityNotice(null);
       setStickerNotice(null);
+      setBlockNotice(null);
       setIsMatchAlert(false);
     }
   }, [user?.id, currentUserId]);
 
   if (!user) return null;
+
+  const currentProfile = DatingService.getCurrentUser() || 
+    DatingService.getAllUsers().find((u) => u.id === currentUserId) || 
+    ({ id: currentUserId, email: '', name: '회원' } as UserProfile);
 
   const statusInfo = getUserActiveStatus(user.lastActive);
   const isOnline = statusInfo.status === 'online';
@@ -70,6 +80,23 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
   const hasVotedForThisUser = todayVoteInfo.votedTargetUserId === user.id;
   const canVoteToday = ItemService.canVotePopularityToday(currentUserId) && !isSelf;
   const currentInv = ItemService.getInventory(currentUserId);
+
+  const handleToggleBlock = () => {
+    if (isSelf) return;
+    if (isBlocked) {
+      DatingService.unblockUser(currentUserId, user.id);
+      setIsBlocked(false);
+      setBlockNotice(`${user.name}님의 차단을 해제했습니다.`);
+    } else {
+      DatingService.blockUser(currentUserId, user.id);
+      setIsBlocked(true);
+      setBlockNotice(`${user.name}님을 차단했습니다. 추천 및 지도에서 제외됩니다.`);
+    }
+    onProfileUpdated?.();
+    setTimeout(() => {
+      setBlockNotice(null);
+    }, 3000);
+  };
 
   const handleSendHeart = () => {
     const res = DatingService.sendLike(currentUserId, user.id);
@@ -186,7 +213,7 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
           />
           <div className="absolute inset-0 bg-gradient-to-t from-stone-950/85 via-stone-950/20 to-black/30"></div>
 
-          {/* Top Action Buttons (Close & Small Report Button) */}
+          {/* Top Action Buttons (Close & Prominent Report Button) */}
           <div className="absolute top-4 right-4 flex items-center gap-2">
             {!isSelf && (
               <button
@@ -194,9 +221,9 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
                 id="open-report-user-btn"
                 onClick={() => setIsReportModalOpen(true)}
                 title="부적절한 사용자 신고하기"
-                className="px-2.5 py-1 rounded-full bg-black/40 hover:bg-red-600/85 text-white/90 hover:text-white text-[11px] font-medium flex items-center gap-1 backdrop-blur-md transition cursor-pointer border border-white/10 shadow"
+                className="px-3 py-1.5 rounded-full bg-rose-600/90 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-1.5 backdrop-blur-md transition cursor-pointer border border-rose-400/40 shadow-md active:scale-95"
               >
-                <ShieldAlert className="w-3 h-3 text-red-300" />
+                <ShieldAlert className="w-3.5 h-3.5 text-white" />
                 <span>신고</span>
               </button>
             )}
@@ -579,10 +606,74 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Clean Dating & Safety Moderation Section (클린 데이팅 & 부적절한 사용자 관리) */}
+          {!isSelf && (
+            <div id="safety-moderation-card" className="mt-4 p-4 rounded-2xl bg-gradient-to-br from-rose-50/80 via-stone-50 to-amber-50/60 border border-rose-200/80 shadow-xs space-y-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500 text-white flex items-center justify-center shadow-xs shrink-0">
+                    <ShieldAlert className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h5 className="text-xs font-bold text-stone-900">클린 데이팅 & 사용자 보호 센터</h5>
+                    <p className="text-[11px] text-stone-500">부적절한 프로필 신고 및 안전 관리</p>
+                  </div>
+                </div>
+                {isBlocked && (
+                  <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 text-[10px] font-bold border border-rose-300 shrink-0">
+                    차단됨
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] text-stone-600 leading-relaxed bg-white/90 p-2.5 rounded-xl border border-stone-200/70">
+                허위 프로필 도용, 비매너 언행, 불건전 만남 유도, 상업적 홍보 등 부적절한 행위 발견 시 즉시 신고해 주세요. 접수 즉시 운영정책에 따라 상대방에게 누적 제재가 부과되며 관리자 심사가 진행됩니다.
+              </p>
+
+              <div className="flex items-center gap-2 pt-0.5">
+                <button
+                  type="button"
+                  id="body-report-user-btn"
+                  onClick={() => setIsReportModalOpen(true)}
+                  className="flex-1 py-2.5 px-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-sm shadow-rose-200 cursor-pointer active:scale-95"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>부적절한 사용자 신고하기</span>
+                </button>
+
+                <button
+                  type="button"
+                  id="body-block-user-btn"
+                  onClick={handleToggleBlock}
+                  className={`py-2.5 px-3 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 border cursor-pointer active:scale-95 ${
+                    isBlocked
+                      ? 'bg-stone-200 hover:bg-stone-300 text-stone-800 border-stone-300'
+                      : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-300 shadow-2xs'
+                  }`}
+                >
+                  <UserX className="w-3.5 h-3.5" />
+                  <span>{isBlocked ? '차단 해제' : '사용자 차단'}</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer Actions */}
-        <div className="p-4 bg-stone-50 border-t border-stone-100 flex items-center gap-3 shrink-0">
+        <div className="p-4 bg-stone-50 border-t border-stone-100 flex items-center gap-2.5 shrink-0">
+          {!isSelf && (
+            <button
+              type="button"
+              id="footer-report-user-btn"
+              onClick={() => setIsReportModalOpen(true)}
+              title="부적절한 사용자 신고하기"
+              className="w-12 h-12 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 flex items-center justify-center transition cursor-pointer active:scale-95 shrink-0 shadow-xs"
+            >
+              <ShieldAlert className="w-5 h-5 text-rose-600" />
+            </button>
+          )}
+
           <button
             type="button"
             id="send-like-heart-btn"
@@ -614,17 +705,25 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
       {isReportModalOpen && (
         <ReportModal
           isOpen={isReportModalOpen}
-          currentUser={{ id: currentUserId } as UserProfile}
+          currentUser={currentProfile}
           targetUser={user}
           onClose={() => setIsReportModalOpen(false)}
           onReportSubmitted={(msg) => {
             setReportSuccessNotice(msg);
+            setIsBlocked(DatingService.isUserBlocked(currentUserId, user.id));
             onProfileUpdated?.();
             setTimeout(() => {
               onClose();
             }, 1800);
           }}
         />
+      )}
+
+      {/* Block Notice Toast */}
+      {blockNotice && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 bg-stone-900 text-white text-xs px-4 py-3 rounded-2xl shadow-xl border border-stone-700 max-w-sm text-center animate-in fade-in slide-in-from-bottom-4">
+          {blockNotice}
+        </div>
       )}
 
       {/* Report Success Toast */}

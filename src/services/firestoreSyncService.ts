@@ -13,7 +13,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { initFirebaseApp, isFirebaseConfigured } from './firebaseConfig';
-import { UserProfile, AdminAccount, AdminLogEntry, AdminBoardPost, LikeAction, UserInventory } from '../types';
+import { UserProfile, AdminAccount, AdminLogEntry, AdminBoardPost, LikeAction, UserInventory, UserReport } from '../types';
 
 export class FirestoreSyncService {
   private static usersUnsubscribe: Unsubscribe | null = null;
@@ -559,5 +559,61 @@ export class FirestoreSyncService {
       this.boardUnsubscribe();
       this.boardUnsubscribe = null;
     }
+  }
+
+  // =========================================================================
+  // 6. REPORTS & MODERATION (Real-time user reports to Cloud Firestore)
+  // =========================================================================
+
+  public static async saveReport(report: UserReport): Promise<boolean> {
+    const db = this.getDb();
+    if (!db || !report || !report.id) return false;
+
+    try {
+      const reportRef = doc(db, 'reports', report.id);
+      const cleanData = JSON.parse(JSON.stringify(report));
+      cleanData.updatedAt = Date.now();
+      await setDoc(reportRef, cleanData, { merge: true });
+      return true;
+    } catch (error) {
+      console.warn(`[FirestoreSync] Failed to save report ${report.id}:`, error);
+      return false;
+    }
+  }
+
+  public static async getAllReports(): Promise<UserReport[]> {
+    const db = this.getDb();
+    if (!db) return [];
+
+    try {
+      const reportsRef = collection(db, 'reports');
+      const snapshot = await getDocs(reportsRef);
+      const reports: UserReport[] = [];
+      snapshot.forEach((d) => {
+        reports.push({ ...d.data(), id: d.id } as UserReport);
+      });
+      reports.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      return reports;
+    } catch (error) {
+      console.warn('[FirestoreSync] Failed to get all reports:', error);
+      return [];
+    }
+  }
+
+  public static subscribeToReports(callback: (reports: UserReport[]) => void): () => void {
+    const db = this.getDb();
+    if (!db) return () => {};
+
+    const reportsRef = collection(db, 'reports');
+    return onSnapshot(reportsRef, (snapshot) => {
+      const reports: UserReport[] = [];
+      snapshot.forEach((d) => {
+        reports.push({ ...d.data(), id: d.id } as UserReport);
+      });
+      reports.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      callback(reports);
+    }, (error) => {
+      console.warn('[FirestoreSync] Reports listener error:', error);
+    });
   }
 }

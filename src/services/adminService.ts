@@ -1336,6 +1336,11 @@ export class AdminService {
     reports.unshift(newReport);
     this.saveReports(reports);
 
+    // Sync report and sanctioned user to Firestore
+    FirestoreSyncService.saveReport(newReport).catch(() => {});
+    FirestoreSyncService.saveUser(target).catch(() => {});
+    FirestoreSyncService.saveUser(freshReporter).catch(() => {});
+
     const roundMsg = isPermanentBan
       ? `신고가 접수되어 누적 10차 제재로 해당 유저가 영구 이용정지 처리되었습니다.`
       : `신고가 접수되어 운영정책에 따라 상대방에게 누적 ${newSanctionRound}차 즉시 제재(${sanctionHours}시간 이용제한)가 적용되었습니다.`;

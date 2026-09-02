@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { AlertTriangle, ShieldAlert, X, Check, AlertCircle, Clock, Info } from 'lucide-react';
+import { AlertTriangle, ShieldAlert, X, Check, AlertCircle, Clock, Info, UserX } from 'lucide-react';
 import { UserProfile, ReportReason } from '../types';
 import { AdminService } from '../services/adminService';
+import { DatingService } from '../services/datingService';
 
 interface ReportModalProps {
   isOpen: boolean;
@@ -48,6 +49,7 @@ export const ReportModal: React.FC<ReportModalProps> = ({
 }) => {
   const [selectedReason, setSelectedReason] = useState<ReportReason>('fake_profile');
   const [customDetail, setCustomDetail] = useState('');
+  const [blockTogether, setBlockTogether] = useState(true);
   const [isConfirmStep, setIsConfirmStep] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -77,6 +79,9 @@ export const ReportModal: React.FC<ReportModalProps> = ({
     setIsSubmitting(false);
 
     if (result.success) {
+      if (blockTogether) {
+        DatingService.blockUser(currentUser.id, targetUser.id);
+      }
       onReportSubmitted(result.message);
       onClose();
     } else {
@@ -178,6 +183,23 @@ export const ReportModal: React.FC<ReportModalProps> = ({
                   className="w-full p-3 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white resize-none"
                 />
               </div>
+
+              {/* Instant Block Option */}
+              <label className="flex items-center gap-2.5 p-3 bg-stone-50 hover:bg-stone-100/80 rounded-2xl border border-stone-200 cursor-pointer transition">
+                <input
+                  type="checkbox"
+                  checked={blockTogether}
+                  onChange={(e) => setBlockTogether(e.target.checked)}
+                  className="rounded text-rose-600 focus:ring-rose-500 h-4 w-4"
+                />
+                <div className="flex-1">
+                  <p className="text-xs font-bold text-stone-800 flex items-center gap-1.5">
+                    <UserX className="w-3.5 h-3.5 text-rose-600" />
+                    <span>신고와 동시에 이 사용자 즉시 차단하기</span>
+                  </p>
+                  <p className="text-[11px] text-stone-500 mt-0.5">내 지도 및 피드 추천에서 숨겨지며 1:1 대화가 차단됩니다.</p>
+                </div>
+              </label>
 
               <div className="pt-2 flex items-center gap-2">
                 <button
