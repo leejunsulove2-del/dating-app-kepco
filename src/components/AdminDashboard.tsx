@@ -325,9 +325,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setSanctionCustomReason('');
   };
 
-    const handleExecuteDirectSanction = (e: React.FormEvent) => {
+  const handleExecuteDirectSanction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!sanctionTargetUser) return;
+
     const res = AdminService.directSanctionUser(
       adminProfile,
       sanctionTargetUser.id,
@@ -335,6 +336,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       sanctionReasonType,
       sanctionCustomReason.trim() || undefined
     );
+
     if (res.success) {
       showToast(res.message, 'success');
       setSanctionTargetUser(null);
@@ -359,31 +361,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setLiftNoticeMessage('');
   };
 
-  const handleExecutedDirectLiftSanction = async (e: React.FormEvent) => {
+  const handleExecuteDirectLiftSanction = (e: React.FormEvent) => {
     e.preventDefault();
     if (!liftTargetUser) return;
 
-    try {
-      const res = await AdminService.directLiftSanctionUser({
-        adminProfile,
-        liftTargetUser,
-        liftReason,
-        liftCompensationBoxes,
-        liftNoticeMessage: liftNoticeMessage.trim() || undefined
-      });
+    const res = AdminService.directLiftSanctionUser(
+      adminProfile,
+      liftTargetUser.id,
+      liftReason,
+      liftCompensationBoxes,
+      liftNoticeMessage.trim() || undefined
+    );
 
-      if (res.success) {
-        showToast(res.message, 'success');
-        setLiftTargetUser(null);
-        refreshDetails();
-        if (selectedUserDetail?.id === liftTargetUser.id) {
-          setSelectedUserDetail(res.user || null);
-        }
-      } else {
-        showToast(res.message, 'error');
+    if (res.success) {
+      showToast(res.message, 'success');
+      setLiftTargetUser(null);
+      refreshAllData();
+      if (selectedUserDetail?.id === liftTargetUser.id) {
+        setSelectedUserDetail(res.user || null);
       }
-    } catch (err: any) {
-      showToast(err.message || '오류가 발생했습니다.', 'error');
+    } else {
+      showToast(res.message, 'error');
     }
   };
 
@@ -426,20 +424,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (res.success) {
       showToast(res.message, 'success');
       refreshAllData();
-
-      // 💡 마찬가지로 : any 타입을 주입하고 안전하게 소모 수량을 빼주어 컴파일 에러를 회피합니다.
-      if (!adminProfile.isMaster) {
-        setAdminProfile((prev: any) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            eventBoxesRemaining: Math.max(0, (Number(prev.eventBoxesRemaining) || 0) - neededBoxes)
-          };
-        });
-      }
     } else {
       showToast(res.message, 'error');
     }
+  };
 
   const handleSendDirectGift = (e: React.FormEvent) => {
     e.preventDefault();
@@ -458,22 +446,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setDirectGiftUser(null);
       setDirectGiftMemo('');
       refreshAllData();
-
-      // 💡 prev 인자에 명시적으로 : any 타입을 지정하여 TypeScript 빌드 에러를 완벽히 해결합니다.
-      if (!adminProfile.isMaster) {
-        setAdminProfile((prev: any) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            eventBoxesRemaining: Math.max(0, (Number(prev.eventBoxesRemaining) || 0) - directGiftCount)
-          };
-        });
-      }
     } else {
       showToast(res.message, 'error');
     }
-
-
+  };
 
   // ==========================================
   // TAB 3: MASTER ONLY - AGENCY ADMINS & GRANT BOXES
