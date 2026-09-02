@@ -424,10 +424,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (res.success) {
       showToast(res.message, 'success');
       refreshAllData();
+
+      // 💡 [실시간 수량 갱신] 최고관리자(isMaster)가 아닐 경우, 이벤트 전체 지급에 소모된 총 상자 수량만큼 상단 UI 배너에서도 즉시 차감합니다.
+      if (!adminProfile.isMaster) {
+        setAdminProfile(prev => ({
+          ...prev,
+          eventBoxesRemaining: Math.max(0, (prev.eventBoxesRemaining || 0) - neededBoxes)
+        }));
+      }
     } else {
       showToast(res.message, 'error');
     }
-  };
+
 
   const handleSendDirectGift = (e: React.FormEvent) => {
     e.preventDefault();
@@ -446,10 +454,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setDirectGiftUser(null);
       setDirectGiftMemo('');
       refreshAllData();
+
+      // 💡 [실시간 수량 갱신] 마스터 관리자가 아닐 경우 화면 우측 상단의 이벤트 상자 개수도 즉시 동적 삭감합니다.
+      if (!adminProfile.isMaster) {
+        setAdminProfile(prev => ({
+          ...prev,
+          eventBoxesRemaining: Math.max(0, (prev.eventBoxesRemaining || 0) - directGiftCount)
+        }));
+      }
     } else {
       showToast(res.message, 'error');
     }
-  };
+
 
   // ==========================================
   // TAB 3: MASTER ONLY - AGENCY ADMINS & GRANT BOXES
