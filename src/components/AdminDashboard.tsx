@@ -361,29 +361,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setLiftNoticeMessage('');
   };
 
-  const handleExecuteDirectLiftSanction = (e: React.FormEvent) => {
+  const handleExecutedDirectLiftSanction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!liftTargetUser) return;
 
-    const res = AdminService.directLiftSanctionUser(
-      adminProfile,
-      liftTargetUser.id,
-      liftReason,
-      liftCompensationBoxes,
-      liftNoticeMessage.trim() || undefined
-    );
+    try {
+      const res = await AdminService.directLiftSanctionUser({
+        adminProfile,
+        liftTargetUser,
+        liftReason,
+        liftCompensationBoxes,
+        liftNoticeMessage: liftNoticeMessage.trim() || undefined
+      });
 
-    if (res.success) {
-      showToast(res.message, 'success');
-      setLiftTargetUser(null);
-      refreshAllData();
-      if (selectedUserDetail?.id === liftTargetUser.id) {
-        setSelectedUserDetail(res.user || null);
+      if (res.success) {
+        showToast(res.message, 'success');
+        setLiftTargetUser(null);
+        refreshDetails();
+        if (selectedUserDetail?.id === liftTargetUser.id) {
+          setSelectedUserDetail(res.user || null);
+        }
+      } else {
+        showToast(res.message, 'error');
       }
-    } else {
-      showToast(res.message, 'error');
+    } catch (err: any) {
+      showToast(err.message || '오류가 발생했습니다.', 'error');
     }
   };
+
 
   const handleOpenGiftModal = (user: UserProfile) => {
     const protection = AdminService.isProtectedAdmin(user);
