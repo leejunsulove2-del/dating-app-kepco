@@ -95,9 +95,9 @@ function saveStoredMessages(allMessages: Record<string, ChatMessage[]>): void {
 }
 export class FirebaseChatService {
  /**
- * Generates a deterministic room ID for two users (e.g. room_user1_user2)
- * 💡 인덱스 번호 유실 오타(sorted[0], sorted[1])를 철저하게 교정 완료했습니다.
- */
+  * Generates a deterministic room ID for two users (e.g. room_user1_user2)
+  * 💡 빌드 장애를 일으키던 인덱스 누락 오타를 완벽하게 교정했습니다.
+  */
  public static getRoomId(userId1: string, userId2: string): string {
  const sorted = [userId1, userId2].sort();
  return `room_${sorted[0]}_${sorted[1]}`;
