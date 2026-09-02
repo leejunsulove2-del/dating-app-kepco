@@ -528,37 +528,24 @@ export class DatingService {
    */
   public static async syncFromCloudFirestore(): Promise<UserProfile[]> {
     try {
-      // 🚀 1. 파이어베이스 실시간 리스너 채널(App.tsx)에서 받아온 최신 데이터 확보
       const cloudUsers = this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
-      
-      // 2. 기존 로컬 장치에 캐시된 유저 풀 확보
       const localUsers = this.getAllUsers();
       const mergedMap = new Map<string, UserProfile>();
 
-      // 3. [원본 보존] 로컬 유저 정보 먼저 맵에 병합
       for (const u of localUsers) {
         if (u && u.id) mergedMap.set(u.id, u);
       }
-
-      // 4. [원본 보존] 파이어베이스 실시간 수신 유저 정보를 최신본으로 덮어쓰기 병합
       for (const cu of cloudUsers) {
-        if (cu && cu.id) {
-          mergedMap.set(cu.id, cu);
-        }
+        if (cu && cu.id) mergedMap.set(cu.id, cu);
       }
 
       const mergedList = Array.from(mergedMap.values());
       
-      // 5. [원본 보존] 병합된 데이터를 로컬 스토리지 덤프 키에 안전하게 동기화 저장
-      // ⚠️ 원본에 기재된 스토리지 키 변수명(USERS_STORAGE_KEY 등)과 대조 확인하세요.
-      const storageKey = (this as any).USERS_STORAGE_KEY || 'dating_app_all_users';
-      localStorage.setItem(storageKey, JSON.stringify(mergedList));
-      
+      localStorage.setItem('dating_app_all_users', JSON.stringify(mergedList));
       return mergedList;
     } catch (e) {
       console.warn('Failed to sync from cloud live data memory:', e);
     }
-    
     return this.getAllUsers();
   }
 
@@ -566,7 +553,6 @@ export class DatingService {
    * Listen to live real-time user updates across all devices
    */
   public static subscribeToLiveUsers(callback?: (users: UserProfile[]) => void): () => void {
-    // 🚀 [교체] 파이어베이스 실시간 소스를 기반으로 로컬 캐시 병합 및 프로필 자동 동기화 가동
     const cloudUsers = this.cloudLiveUsers.length > 0 ? this.cloudLiveUsers : [];
     const localUsers = this.getAllUsers();
     const mergedMap = new Map<string, UserProfile>();
@@ -574,36 +560,27 @@ export class DatingService {
     for (const u of localUsers) {
       if (u && u.id) mergedMap.set(u.id, u);
     }
-
     for (const cu of cloudUsers) {
-      if (cu && cu.id) {
-        mergedMap.set(cu.id, cu);
-      }
+      if (cu && cu.id) mergedMap.set(cu.id, cu);
     }
 
     const mergedList = Array.from(mergedMap.values());
     
-    // [원본 보존] 병합 데이터 스토리지 캐싱
-    const storageKey = (this as any).USERS_STORAGE_KEY || 'dating_app_all_users';
-    localStorage.setItem(storageKey, JSON.stringify(mergedList));
+    localStorage.setItem('dating_app_all_users', JSON.stringify(mergedList));
 
-    // [원본 보존] 다른 기기에서 관리자 승인 등으로 내 정보가 수정되었을 때 내 세션 실시간 동기화
     const curUser = this.getCurrentUser();
     if (curUser) {
       const updatedCur = mergedMap.get(curUser.id);
       if (updatedCur) {
-        const userKey = (this as any).CURRENT_USER_KEY || 'dating_app_current_user';
-        localStorage.setItem(userKey, JSON.stringify(updatedCur));
+        localStorage.setItem('dating_app_current_user', JSON.stringify(updatedCur));
       }
     }
+
     if (callback) {
       callback(mergedList);
     }
-
-    // 외부 파이어베이스 리스너 관리는 App.tsx가 총괄하므로 빈 해제 함수 반환으로 규격 통일
     return () => {};
   }
-
 
   /**
    * Get all registered users (Guaranteed unique by id)
