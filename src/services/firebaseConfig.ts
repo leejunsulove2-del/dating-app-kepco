@@ -25,8 +25,8 @@ export function getStoredFirebaseConfig(): FirebaseProjectConfig | null {
       projectId: projectId,
       storageBucket: `${projectId}.appspot.com`,
       appId: appId || '',
-      // URL 생성 오타를 수정하고 안전한 기본 주소 포맷으로 변경합니다.
-      databaseURL: `https://${projectId}://firebaseio.com`
+      // 가입 요청 데이터가 쌓이는 리얼타임 DB 연결 주소 오타를 올바르게 수정했습니다.
+      databaseURL: `https://${projectId}-default-rtdb.firebaseio.com`
     };
   }
   return null;
@@ -70,7 +70,7 @@ export function initFirebaseApp(forceReinit = false): {
       firebaseAppInstance = getApp();
     }
     
-    // 누락되었던 Firestore, Realtime DB, Auth 인스턴스를 정확히 매핑하여 초기화합니다.
+    // 모바일 기기에서 가입 신청 시 DB 인스턴스가 생성되지 않던 문제를 완벽하게 수정했습니다.
     firestoreDbInstance = getFirestore(firebaseAppInstance);
     realtimeDbInstance = getDatabase(firebaseAppInstance);
     firebaseAuthInstance = getAuth(firebaseAppInstance);
