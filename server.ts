@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
+import { INITIAL_PROFILES } from './src/services/mockProfiles';
 
 interface ServerDatabase {
   users: any[];
@@ -19,13 +20,94 @@ interface ServerDatabase {
 
 const DB_FILE_PATH = path.join(process.cwd(), 'server_database.json');
 
+const DEFAULT_SERVER_ADMINS = [
+  {
+    id: 'admin_master',
+    email: 'admin@kepco.co.kr',
+    name: '최고 관리자 (KEPCO)',
+    department: '한국전력공사 시스템총괄실',
+    isMaster: true,
+    agencyDomain: 'kepco.co.kr',
+    agencyName: '한국전력공사 (총괄)',
+    passwordPlain: '12101074',
+    eventBoxesRemaining: 999999,
+    createdAt: 1700000000000,
+  },
+  {
+    id: 'admin_agency_kepco1',
+    email: 'hr_manager@kepco.co.kr',
+    name: '김전력 (인사운영)',
+    department: '한국전력공사 인재경영처',
+    isMaster: false,
+    agencyDomain: 'kepco.co.kr',
+    agencyName: '한국전력공사',
+    passwordPlain: '1234',
+    eventBoxesRemaining: 1000,
+    createdAt: 1700000001000,
+    createdBy: 'admin@kepco.co.kr',
+  },
+  {
+    id: 'admin_agency_kepco2',
+    email: 'welfare@kepco.co.kr',
+    name: '이복지 (사내복지)',
+    department: '한국전력공사 노사복지부',
+    isMaster: false,
+    agencyDomain: 'kepco.co.kr',
+    agencyName: '한국전력공사',
+    passwordPlain: '1234',
+    eventBoxesRemaining: 1000,
+    createdAt: 1700000002000,
+    createdBy: 'admin@kepco.co.kr',
+  },
+  {
+    id: 'admin_agency_kwater',
+    email: 'admin@kwater.or.kr',
+    name: '박수자 (총무부)',
+    department: '한국수자원공사 경영지원처',
+    isMaster: false,
+    agencyDomain: 'kwater.or.kr',
+    agencyName: '한국수자원공사',
+    passwordPlain: '1234',
+    eventBoxesRemaining: 1000,
+    createdAt: 1700000003000,
+    createdBy: 'admin@kepco.co.kr',
+  },
+  {
+    id: 'admin_agency_lh',
+    email: 'admin@lh.or.kr',
+    name: '최토지 (복지운영)',
+    department: '한국토지주택공사 복지기획처',
+    isMaster: false,
+    agencyDomain: 'lh.or.kr',
+    agencyName: '한국토지주택공사',
+    passwordPlain: '1234',
+    eventBoxesRemaining: 1000,
+    createdAt: 1700000004000,
+    createdBy: 'admin@kepco.co.kr',
+  },
+];
+
 // Initialize or load database from persistent file
 function loadDatabase(): ServerDatabase {
+  let dbData: ServerDatabase = {
+    users: [],
+    adminAccounts: [],
+    adminBoard: [],
+    adminLogs: [],
+    userInventories: {},
+    likes: [],
+    reports: [],
+    userPasswords: {},
+    chatMessages: {},
+    firebaseConfig: null,
+    lastUpdated: Date.now(),
+  };
+
   try {
     if (fs.existsSync(DB_FILE_PATH)) {
       const raw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
       const parsed = JSON.parse(raw);
-      return {
+      dbData = {
         users: parsed.users || [],
         adminAccounts: parsed.adminAccounts || [],
         adminBoard: parsed.adminBoard || [],
@@ -43,19 +125,50 @@ function loadDatabase(): ServerDatabase {
     console.error('[Server DB] Error reading persistent database:', err);
   }
 
-  return {
-    users: [],
-    adminAccounts: [],
-    adminBoard: [],
-    adminLogs: [],
-    userInventories: {},
-    likes: [],
-    reports: [],
-    userPasswords: {},
-    chatMessages: {},
-    firebaseConfig: null,
-    lastUpdated: Date.now(),
-  };
+  // Seed default admin accounts if empty
+  if (!dbData.adminAccounts || dbData.adminAccounts.length === 0) {
+    dbData.adminAccounts = [...DEFAULT_SERVER_ADMINS];
+  }
+
+  // Seed default users from INITIAL_PROFILES if empty
+  if (!dbData.users || dbData.users.length === 0) {
+    dbData.users = INITIAL_PROFILES.map((p, idx) => ({
+      ...p,
+      approvalStatus: 'approved',
+      verifiedEmail: true,
+      location: {
+        latitude: 37.4979 + ((idx * 7) % 20 - 10) * 0.003,
+        longitude: 127.0276 + ((idx * 11) % 20 - 10) * 0.003,
+        lastUpdated: Date.now(),
+      },
+      popularity: p.popularity ?? 110,
+      isOnline: idx % 2 === 0,
+      lastActive: Date.now() - (idx * 3 + 1) * 60000,
+    }));
+  }
+
+  // Seed default passwords
+  DEFAULT_SERVER_ADMINS.forEach((adm) => {
+    const clean = adm.email.toLowerCase().trim();
+    if (!dbData.userPasswords[clean]) {
+      dbData.userPasswords[clean] = adm.passwordPlain;
+    }
+  });
+
+  INITIAL_PROFILES.forEach((u) => {
+    const clean = u.email.toLowerCase().trim();
+    if (!dbData.userPasswords[clean]) {
+      dbData.userPasswords[clean] = '1234';
+    }
+  });
+
+  try {
+    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(dbData, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Server DB] Could not write initial DB file:', err);
+  }
+
+  return dbData;
 }
 
 let db = loadDatabase();
@@ -222,6 +335,28 @@ async function startServer() {
     db.users = db.users.filter((u) => u.id !== id);
     saveDatabase();
     res.json({ success: true });
+  });
+
+  // Check user existence & approval status directly
+  app.post('/api/auth/check-user', (req, res) => {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+    const cleanEmail = String(email).toLowerCase().trim();
+    const user = db.users.find((u) => u.email?.toLowerCase() === cleanEmail);
+    if (!user) {
+      return res.json({ exists: false });
+    }
+    return res.json({
+      exists: true,
+      user,
+      approvalStatus: user.approvalStatus || 'approved',
+      hasPassword: Boolean(db.userPasswords[cleanEmail]),
+    });
+  });
+
+  // Passwords Sync endpoint
+  app.get('/api/sync/passwords', (req, res) => {
+    res.json(db.userPasswords || {});
   });
 
   // 3. Admin Accounts Management

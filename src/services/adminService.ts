@@ -438,6 +438,11 @@ export class AdminService {
     // Save to local users list & database
     DatingService.saveUser(target);
 
+    // Explicitly sync to Server API for cross-device propagation
+    ApiSyncService.approveUser(userId, adminEmail, adminName).catch((err) => {
+      console.warn('Failed to sync approved user to Server API:', err);
+    });
+
     // Explicitly sync to Cloud Firestore for instant multi-device propagation
     FirestoreSyncService.saveUser(target).catch((err) => {
       console.warn('Failed to sync approved user to Cloud Firestore:', err);
@@ -471,6 +476,11 @@ export class AdminService {
 
     // Save to local users list & database
     DatingService.saveUser(target);
+
+    // Explicitly sync to Server API for cross-device propagation
+    ApiSyncService.rejectUser(userId, target.rejectionReason, adminEmail).catch((err) => {
+      console.warn('Failed to sync rejected user to Server API:', err);
+    });
 
     // Explicitly sync to Cloud Firestore for instant multi-device propagation
     FirestoreSyncService.saveUser(target).catch((err) => {

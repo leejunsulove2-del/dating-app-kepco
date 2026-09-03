@@ -28,6 +28,7 @@ export class ApiSyncService {
     adminLogs?: AdminLogEntry[];
     userInventories?: Record<string, UserInventory>;
     likes?: LikeAction[];
+    userPasswords?: Record<string, string>;
     firebaseConfig?: FirebaseProjectConfig | null;
   } | null> {
     try {
@@ -43,8 +44,95 @@ export class ApiSyncService {
   }
 
   // =========================================================================
-  // USER SYNC
+  // USER SYNC & REGISTRATION
   // =========================================================================
+
+  public static async fetchUsers(): Promise<UserProfile[]> {
+    try {
+      const res = await fetch('/api/sync/users');
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  public static async fetchPasswords(): Promise<Record<string, string>> {
+    try {
+      const res = await fetch('/api/sync/passwords');
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {}
+    return {};
+  }
+
+  public static async checkUser(email: string): Promise<{
+    exists: boolean;
+    user?: UserProfile;
+    approvalStatus?: string;
+    hasPassword?: boolean;
+  }> {
+    try {
+      const res = await fetch('/api/auth/check-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {}
+    return { exists: false };
+  }
+
+  public static async registerUser(user: UserProfile, passwordPlain: string): Promise<boolean> {
+    try {
+      const res = await fetch('/api/sync/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user, passwordPlain }),
+      });
+      if (res.ok) {
+        return true;
+      }
+    } catch (e) {
+      console.warn('[ApiSync] registerUser server failed:', e);
+    }
+    return false;
+  }
+
+  public static async approveUser(userId: string, adminEmail: string, adminName: string): Promise<boolean> {
+    try {
+      const res = await fetch('/api/sync/approve-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, adminEmail, adminName }),
+      });
+      if (res.ok) {
+        return true;
+      }
+    } catch (e) {
+      console.warn('[ApiSync] approveUser server failed:', e);
+    }
+    return false;
+  }
+
+  public static async rejectUser(userId: string, reason: string, adminName: string): Promise<boolean> {
+    try {
+      const res = await fetch('/api/sync/reject-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, reason, adminName }),
+      });
+      if (res.ok) {
+        return true;
+      }
+    } catch (e) {
+      console.warn('[ApiSync] rejectUser server failed:', e);
+    }
+    return false;
+  }
 
   public static async syncUsers(users: UserProfile[]): Promise<void> {
     // 1. Send to server

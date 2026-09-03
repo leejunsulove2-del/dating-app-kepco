@@ -180,6 +180,11 @@ export default function App() {
     DatingService.initDatabase(currentLocation.latitude, currentLocation.longitude);
     requestAccurateLocation(true);
 
+    // Initial server & cloud sync to pull all approved users and credentials across terminals
+    DatingService.syncFromCloudFirestore().then(() => {
+      AdminService.syncFromCloudFirestore().catch(() => {});
+    }).catch(() => {});
+
     // 🚀 Multi-device real-time users synchronization
     const unsubLiveUsers = DatingService.subscribeToLiveUsers(() => {
       if (currentUserRef.current) {

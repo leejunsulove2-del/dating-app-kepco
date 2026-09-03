@@ -17,6 +17,7 @@ import confetti from 'canvas-confetti';
 import { DEFAULT_ALLOWED_DOMAINS, DatingService } from '../services/datingService';
 import { AdminService } from '../services/adminService';
 import { FirestoreSyncService } from '../services/firestoreSyncService';
+import { ApiSyncService } from '../services/apiSyncService';
 import { UserProfile, AdminAccount } from '../types';
 import { BirthDatePicker } from './BirthDatePicker';
 
@@ -113,27 +114,43 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     const targetEmail = pendingApprovalEmail.toLowerCase().trim();
 
-    // 1. Check directly from Cloud Firestore on mount or email set
+    // 1. Check directly from Server & Cloud Firestore on mount or email set
     let isCancelled = false;
     const checkFreshFromCloud = async () => {
       try {
-        const cloudUsers = await FirestoreSyncService.getAllUsers();
-        if (isCancelled || !cloudUsers || cloudUsers.length === 0) return;
-        
-        DatingService.updateInternalUsersData(cloudUsers);
-        const matched = cloudUsers.find(
+        await DatingService.syncFromCloudFirestore();
+        if (isCancelled) return;
+
+        let allUsers = DatingService.getAllUsers();
+        let matched = allUsers.find(
           (u) => u.email.toLowerCase() === targetEmail
         );
+
+        if (!matched || matched.approvalStatus === 'pending') {
+          const directCheck = await ApiSyncService.checkUser(targetEmail);
+          if (directCheck.exists && directCheck.user) {
+            DatingService.saveUser(directCheck.user);
+            matched = directCheck.user;
+          }
+        }
+
         if (matched && matched.approvalStatus === 'approved') {
           handleApprovedTransition(matched);
+        } else if (matched && matched.approvalStatus === 'rejected') {
+          setError(`[가입 반려] 소속 기관 관리자에 의해 가입이 반려되었습니다. (사유: ${matched.rejectionReason || '소속 확인 불가'})`);
+          localStorage.removeItem(PENDING_EMAIL_STORAGE_KEY);
+          localStorage.removeItem(PENDING_USER_STORAGE_KEY);
+          setPendingApprovalEmail(null);
+          setPendingApprovalUser(null);
+          setActiveTab('login');
         }
       } catch (err) {
-        console.warn('Initial cloud approval check failed:', err);
+        console.warn('Initial approval check failed:', err);
       }
     };
     checkFreshFromCloud();
 
-    // 2. Real-time Firestore stream subscription
+    // 2. Real-time Live Users subscription (polls Server API & listens to Firestore)
     const unsubscribe = DatingService.subscribeToLiveUsers((liveUsers) => {
       if (isCancelled || !liveUsers || liveUsers.length === 0) return;
       const matched = liveUsers.find(
@@ -166,22 +183,32 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setApprovalCheckNotice(null);
     setError(null);
 
-    try {
-      const cloudUsers = await FirestoreSyncService.getAllUsers();
-      if (cloudUsers && cloudUsers.length > 0) {
-        DatingService.updateInternalUsersData(cloudUsers);
-        const targetEmail = pendingApprovalEmail.toLowerCase().trim();
-        const matched = cloudUsers.find(
-          (u) => u.email.toLowerCase() === targetEmail
-        );
+    const targetEmail = pendingApprovalEmail.toLowerCase().trim();
 
-        if (matched && matched.approvalStatus === 'approved') {
+    try {
+      await DatingService.syncFromCloudFirestore();
+      let allUsers = DatingService.getAllUsers();
+      let matched = allUsers.find(
+        (u) => u.email.toLowerCase() === targetEmail
+      );
+
+      // Direct check fallback against server endpoint
+      if (!matched || matched.approvalStatus === 'pending') {
+        const directCheck = await ApiSyncService.checkUser(targetEmail);
+        if (directCheck.exists && directCheck.user) {
+          DatingService.saveUser(directCheck.user);
+          matched = directCheck.user;
+        }
+      }
+
+      if (matched) {
+        if (matched.approvalStatus === 'approved') {
           setApprovalCheckNotice('승인이 확인되었습니다! 로그인으로 전환합니다...');
           setTimeout(() => {
             handleApprovedTransition(matched);
           }, 400);
           return;
-        } else if (matched && matched.approvalStatus === 'rejected') {
+        } else if (matched.approvalStatus === 'rejected') {
           setError(`[가입 반려] 사유: ${matched.rejectionReason || '소속 확인 불가'}`);
           localStorage.removeItem(PENDING_EMAIL_STORAGE_KEY);
           localStorage.removeItem(PENDING_USER_STORAGE_KEY);

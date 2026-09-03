@@ -559,28 +559,42 @@ export class DatingService {
         }
         const mergedList = Array.from(mergedMap.values());
         localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+
+        // Sync passwords from server if available
+        if (serverData.userPasswords && typeof serverData.userPasswords === 'object') {
+          const passMap = JSON.parse(localStorage.getItem(USER_PASSWORDS_KEY) || '{}');
+          localStorage.setItem(USER_PASSWORDS_KEY, JSON.stringify({ ...serverData.userPasswords, ...passMap }));
+        }
+
         return mergedList;
       }
 
+      // If server is empty but client has users, push client users to server
+      const localUsers = this.getAllUsers();
+      if (localUsers.length > 0 && serverData && (!serverData.users || serverData.users.length === 0)) {
+        ApiSyncService.syncUsers(localUsers).catch(() => {});
+      }
+
       // 2. Try Firestore
-      const cloudUsers = await FirestoreSyncService.getAllUsers();
-      if (cloudUsers && cloudUsers.length > 0) {
-        const localUsers = this.getAllUsers();
-        const mergedMap = new Map<string, UserProfile>();
+      if (isFirebaseConfigured()) {
+        const cloudUsers = await FirestoreSyncService.getAllUsers();
+        if (cloudUsers && cloudUsers.length > 0) {
+          const mergedMap = new Map<string, UserProfile>();
 
-        for (const u of localUsers) {
-          if (u && u.id) mergedMap.set(u.id, u);
-        }
-
-        for (const cu of cloudUsers) {
-          if (cu && cu.id) {
-            mergedMap.set(cu.id, cu);
+          for (const u of localUsers) {
+            if (u && u.id) mergedMap.set(u.id, u);
           }
-        }
 
-        const mergedList = Array.from(mergedMap.values());
-        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
-        return mergedList;
+          for (const cu of cloudUsers) {
+            if (cu && cu.id) {
+              mergedMap.set(cu.id, cu);
+            }
+          }
+
+          const mergedList = Array.from(mergedMap.values());
+          localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
+          return mergedList;
+        }
       }
     } catch (e) {
       console.warn('Failed to sync from server/Firestore:', e);
@@ -592,41 +606,53 @@ export class DatingService {
    * Listen to live real-time user updates across all devices
    */
   public static subscribeToLiveUsers(callback?: (users: UserProfile[]) => void): () => void {
-    const unsub = FirestoreSyncService.subscribeToUsers((cloudUsers) => {
+    let active = true;
+
+    // 1. If Firebase is configured, subscribe to Firestore snapshot
+    const unsubFirestore = FirestoreSyncService.subscribeToUsers((cloudUsers) => {
+      if (!active) return;
       if (cloudUsers && cloudUsers.length > 0) {
-        const localUsers = this.getAllUsers();
-        const mergedMap = new Map<string, UserProfile>();
-
-        for (const u of localUsers) {
-          if (u && u.id) mergedMap.set(u.id, u);
-        }
-
-        for (const cu of cloudUsers) {
-          if (cu && cu.id) {
-            mergedMap.set(cu.id, cu);
-          }
-        }
-
-        const mergedList = Array.from(mergedMap.values());
-        localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(mergedList));
-
-        // If current user updated on cloud (e.g. approved by admin on another device)
-        const curUser = this.getCurrentUser();
-        if (curUser) {
-          const updatedCur = mergedMap.get(curUser.id);
-          if (updatedCur) {
-            localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(updatedCur));
-          }
-        }
-
+        this.updateInternalUsersData(cloudUsers);
+        const mergedList = this.getAllUsers();
         if (callback) {
           callback(mergedList);
         }
       }
     });
 
+    // 2. Server polling (every 2.5s) for instant cross-terminal sync (e.g. Device 1 & Device 2)
+    const pollInterval = setInterval(async () => {
+      if (!active) return;
+      try {
+        const serverData = await ApiSyncService.fetchAllData();
+        if (!active || !serverData) return;
+
+        if (serverData.userPasswords && typeof serverData.userPasswords === 'object') {
+          const passMap = JSON.parse(localStorage.getItem(USER_PASSWORDS_KEY) || '{}');
+          localStorage.setItem(USER_PASSWORDS_KEY, JSON.stringify({ ...serverData.userPasswords, ...passMap }));
+        }
+
+        if (serverData.users && serverData.users.length > 0) {
+          const prevUsers = this.getAllUsers();
+          const prevStr = JSON.stringify(prevUsers.map((u) => ({ id: u.id, s: u.approvalStatus, e: u.email })));
+
+          this.updateInternalUsersData(serverData.users);
+          const newUsers = this.getAllUsers();
+          const newStr = JSON.stringify(newUsers.map((u) => ({ id: u.id, s: u.approvalStatus, e: u.email })));
+
+          if (prevStr !== newStr && callback) {
+            callback(newUsers);
+          }
+        }
+      } catch (e) {
+        // silent
+      }
+    }, 2500);
+
     return () => {
-      if (unsub) unsub();
+      active = false;
+      clearInterval(pollInterval);
+      if (unsubFirestore) unsubFirestore();
     };
   }
 
@@ -1014,9 +1040,14 @@ export class DatingService {
     // Save Password
     this.saveUserPassword(cleanEmail, params.passwordPlain);
 
-    // Save user
+    // Save user locally
     allUsers.push(newUser);
     localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(allUsers));
+
+    // Save to Server API for instant cross-terminal / cross-device propagation
+    ApiSyncService.registerUser(newUser, params.passwordPlain).catch((err) => {
+      console.warn('Failed to save registered user to Server API:', err);
+    });
 
     // Save to Cloud Firestore for permanent cross-device persistence
     FirestoreSyncService.saveUser(newUser).catch((err) => {
@@ -1031,7 +1062,7 @@ export class DatingService {
   }
 
   /**
-   * User Login with Agency Approval Status Check (with real-time Cloud Firestore sync)
+   * User Login with Agency Approval Status Check (with cross-device Server API & Cloud Firestore sync)
    */
   public static async loginUserWithApprovalCheck(
     email: string,
@@ -1055,21 +1086,53 @@ export class DatingService {
       };
     }
 
-    // Try local lookup first
+    // 1. Try local lookup first
     let allUsers = this.getAllUsers();
     let user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
 
-    // If not found locally or currently marked as pending/rejected, query Cloud Firestore to get the freshest approval status
+    // 2. Query Server API & Firestore if user is not in local storage OR is pending/rejected
     if (!user || user.approvalStatus === 'pending') {
       try {
-        const cloudUsers = await FirestoreSyncService.getAllUsers();
-        if (cloudUsers && cloudUsers.length > 0) {
-          this.updateInternalUsersData(cloudUsers);
-          allUsers = this.getAllUsers();
-          user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        const serverData = await ApiSyncService.fetchAllData();
+        if (serverData) {
+          if (serverData.users && serverData.users.length > 0) {
+            this.updateInternalUsersData(serverData.users);
+          }
+          if (serverData.userPasswords && typeof serverData.userPasswords === 'object') {
+            const passMap = JSON.parse(localStorage.getItem(USER_PASSWORDS_KEY) || '{}');
+            localStorage.setItem(USER_PASSWORDS_KEY, JSON.stringify({ ...serverData.userPasswords, ...passMap }));
+          }
         }
       } catch (e) {
-        console.warn('Failed to refresh users from Cloud Firestore on login check:', e);
+        console.warn('Failed to refresh users from Server on login check:', e);
+      }
+
+      if (isFirebaseConfigured()) {
+        try {
+          const cloudUsers = await FirestoreSyncService.getAllUsers();
+          if (cloudUsers && cloudUsers.length > 0) {
+            this.updateInternalUsersData(cloudUsers);
+          }
+        } catch (e) {
+          console.warn('Failed to refresh users from Cloud Firestore on login check:', e);
+        }
+      }
+
+      allUsers = this.getAllUsers();
+      user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    }
+
+    // 3. If STILL not found, query dedicated user check endpoint directly
+    if (!user) {
+      try {
+        const checkRes = await ApiSyncService.checkUser(cleanEmail);
+        if (checkRes.exists && checkRes.user) {
+          this.saveUser(checkRes.user);
+          allUsers = this.getAllUsers();
+          user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail) || checkRes.user;
+        }
+      } catch (e) {
+        console.warn('Direct checkUser endpoint failed:', e);
       }
     }
 

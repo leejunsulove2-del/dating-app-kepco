@@ -1,0 +1,471 @@
+{
+  "users": [
+    {
+      "id": "user_1",
+      "email": "jisoo.kim@korea.kr",
+      "name": "김지수",
+      "gender": "female",
+      "birthDate": "1998-04-15",
+      "age": 26,
+      "company": "공무원 (중앙행정기관 주무관)",
+      "photoUrl": "/assets/profiles/woman_1.svg",
+      "bio": "주말엔 조용한 성수동 카페에서 드립 커피 마시며 전시회 보는 걸 좋아해요. 대화가 잘 통하고 따뜻한 분과 맛있는 브런치 먹으러 가고 싶어요!",
+      "interests": [
+        "☕ 카페투어",
+        "🎨 전시회/미술",
+        "🍷 와인/위스키",
+        "📸 사진촬영"
+      ],
+      "isOnline": true,
+      "verifiedEmail": true,
+      "createdAt": 1787530601589,
+      "lastActive": 1788394541589,
+      "popularity": 118,
+      "isTestAccount": true,
+      "stickers": {
+        "✨ 훈훈비주얼": 14,
+        "☕ 커피메이트": 9,
+        "🌸 인간비타민": 11,
+        "🗣️ 대화맛집": 6
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4679,
+        "longitude": 126.9976,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_2",
+      "email": "minho.lee@kepco.co.kr",
+      "name": "이민호",
+      "gender": "male",
+      "birthDate": "1995-11-20",
+      "age": 29,
+      "company": "한국전력공사 (전력망 엔지니어)",
+      "photoUrl": "/assets/profiles/man_1.svg",
+      "bio": "퇴근 후 한강 러닝하고 주말엔 맛집 탐방하는 게 힐링이에요. 긍정적인 에너지를 주고받을 수 있는 인연을 찾고 있습니다. 편하게 인사해요 :)",
+      "interests": [
+        "🏃 러닝/마라톤",
+        "🍣 맛집탐방",
+        "✈️ 해외여행",
+        "🎾 테니스/골프"
+      ],
+      "isOnline": false,
+      "verifiedEmail": true,
+      "createdAt": 1787962601589,
+      "lastActive": 1788394361589,
+      "popularity": 112,
+      "isTestAccount": true,
+      "stickers": {
+        "🏃 운동메이트": 15,
+        "👔 센스쟁이": 8,
+        "💯 친절매너": 12,
+        "🐶 댕댕이상": 7
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4889,
+        "longitude": 127.0306,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_3",
+      "email": "sujin.park@lh.or.kr",
+      "name": "박수진",
+      "gender": "female",
+      "birthDate": "1997-08-12",
+      "age": 27,
+      "company": "한국토지주택공사 (도시재생기획)",
+      "photoUrl": "/assets/profiles/woman_2.svg",
+      "bio": "새로운 곳 여행하고 다양한 이야기 나누는 걸 좋아합니다. 솔직하고 다정한 사람에게 끌려요. 같이 가볍게 산책하거나 와인 한잔 어떠세요?",
+      "interests": [
+        "✈️ 해외여행",
+        "🍷 와인/위스키",
+        "🍣 맛집탐방",
+        "🎸 음악감상/공연"
+      ],
+      "isOnline": true,
+      "verifiedEmail": true,
+      "createdAt": 1788135401589,
+      "lastActive": 1788394181589,
+      "popularity": 125,
+      "isTestAccount": true,
+      "stickers": {
+        "🌟 심쿵매력": 18,
+        "🍽️ 맛잘알": 10,
+        "🎶 취향저격": 13,
+        "✨ 훈훈비주얼": 16
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.5099,
+        "longitude": 127.0036,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_4",
+      "email": "hyunwoo.jung@korail.com",
+      "name": "정현우",
+      "gender": "male",
+      "birthDate": "1994-03-05",
+      "age": 30,
+      "company": "한국철도공사 (운영관리 본부)",
+      "photoUrl": "/assets/profiles/man_2.svg",
+      "bio": "일상의 작은 행복을 함께 나눌 인연을 찾습니다. 운동과 맛있는 요리를 즐겨요. 서로 존중하며 편안하게 지낼 수 있는 분 환영합니다!",
+      "interests": [
+        "💪 헬스/웨이트",
+        "🍳 요리/베이킹",
+        "🏕️ 캠핑/글램핑",
+        "🎬 영화/넷플릭스"
+      ],
+      "isOnline": false,
+      "verifiedEmail": true,
+      "createdAt": 1787789801589,
+      "lastActive": 1788394001589,
+      "popularity": 106,
+      "isTestAccount": true,
+      "stickers": {
+        "💯 친절매너": 14,
+        "🍽️ 맛잘알": 8,
+        "👔 센스쟁이": 7
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4709,
+        "longitude": 127.0366,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_5",
+      "email": "chaewon.yoon@seoul.go.kr",
+      "name": "윤채원",
+      "gender": "female",
+      "birthDate": "1999-01-28",
+      "age": 25,
+      "company": "서울특별시청 (문화정책과)",
+      "photoUrl": "/assets/profiles/woman_3.svg",
+      "bio": "주말엔 댕댕이랑 올림픽공원 산책하고 베이킹하는 집순이이자 여행러입니다. 코드가 맞는 분과 소소한 일상을 공유하고 싶어요 ✨",
+      "interests": [
+        "🐶 반려견 산책",
+        "🍳 요리/베이킹",
+        "☕ 카페투어",
+        "🎬 영화/넷플릭스"
+      ],
+      "isOnline": true,
+      "verifiedEmail": true,
+      "createdAt": 1788221801589,
+      "lastActive": 1788393821589,
+      "popularity": 121,
+      "isTestAccount": true,
+      "stickers": {
+        "🐶 댕댕이상": 19,
+        "🌸 인간비타민": 15,
+        "☕ 커피메이트": 11
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4919,
+        "longitude": 127.0096,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_6",
+      "email": "dohyun.kang@kwater.or.kr",
+      "name": "강도현",
+      "gender": "male",
+      "birthDate": "1996-06-19",
+      "age": 28,
+      "company": "한국수자원공사 (연구원)",
+      "photoUrl": "/assets/profiles/man_3.svg",
+      "bio": "클라이밍과 서핑 좋아하는 활동적인 성격이에요. 유머 감각 있고 긍정적인 바이브 가진 분과 주말에 액티비티나 드라이브 가고 싶습니다!",
+      "interests": [
+        "🧗 클라이밍",
+        "✈️ 해외여행",
+        "🎾 테니스/골프",
+        "🏕️ 캠핑/글램핑"
+      ],
+      "isOnline": false,
+      "verifiedEmail": true,
+      "createdAt": 1788049001589,
+      "lastActive": 1788393641589,
+      "popularity": 108,
+      "isTestAccount": true,
+      "stickers": {
+        "🏃 운동메이트": 12,
+        "👔 센스쟁이": 9,
+        "🗣️ 대화맛집": 7
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.5129,
+        "longitude": 127.04260000000001,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_7",
+      "email": "eunji.song@nhis.or.kr",
+      "name": "송은지",
+      "gender": "female",
+      "birthDate": "1996-10-03",
+      "age": 28,
+      "company": "국민건강보험공단 (본부 대리)",
+      "photoUrl": "/assets/profiles/woman_4.svg",
+      "bio": "인디 음악 라이브 공연 보고 서점 탐방하는 거 좋아해요. 잔잔한 대화 속에서 서로의 취향을 알아가는 설렘을 느끼고 싶어요 🌿",
+      "interests": [
+        "🎸 음악감상/공연",
+        "📚 독서/스터디",
+        "☕ 카페투어",
+        "🎨 전시회/미술"
+      ],
+      "isOnline": true,
+      "verifiedEmail": true,
+      "createdAt": 1787703401589,
+      "lastActive": 1788393461589,
+      "popularity": 115,
+      "isTestAccount": true,
+      "stickers": {
+        "🎶 취향저격": 16,
+        "☕ 커피메이트": 13,
+        "🐱 냥이상": 8
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4739,
+        "longitude": 127.0156,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_8",
+      "email": "taehyung.choi@ex.co.kr",
+      "name": "최태형",
+      "gender": "male",
+      "birthDate": "1993-12-14",
+      "age": 31,
+      "company": "한국도로공사 (스마트교통팀)",
+      "photoUrl": "/assets/profiles/man_4.svg",
+      "bio": "드라이브와 캠핑, 좋은 음악 듣는 시간들을 소중히 생각합니다. 서로에게 든든한 휴식처가 되어줄 좋은 사람을 만나고 싶어요.",
+      "interests": [
+        "🏕️ 캠핑/글램핑",
+        "🚗 드라이브",
+        "🍷 와인/위스키",
+        "💪 헬스/웨이트"
+      ],
+      "isOnline": false,
+      "verifiedEmail": true,
+      "createdAt": 1787357801589,
+      "lastActive": 1788393281589,
+      "popularity": 104,
+      "isTestAccount": true,
+      "stickers": {
+        "💯 친절매너": 11,
+        "👔 센스쟁이": 6,
+        "✨ 훈훈비주얼": 8
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4949,
+        "longitude": 127.04860000000001,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_9",
+      "email": "yuna.han@knto.or.kr",
+      "name": "한유나",
+      "gender": "female",
+      "birthDate": "1997-03-22",
+      "age": 27,
+      "company": "한국관광공사 (해외마케팅팀)",
+      "photoUrl": "/assets/profiles/woman_5.svg",
+      "bio": "영화와 콘서트 보는 걸 사랑해요. 위트 있고 대화 코드가 통하는 분과 즐거운 주말을 보내고 싶습니다!",
+      "interests": [
+        "🎬 영화/넷플릭스",
+        "🎸 음악감상/공연",
+        "🍣 맛집탐방",
+        "☕ 카페투어"
+      ],
+      "isOnline": true,
+      "verifiedEmail": true,
+      "createdAt": 1787098601589,
+      "lastActive": 1788393101589,
+      "popularity": 119,
+      "isTestAccount": true,
+      "stickers": {
+        "🌸 인간비타민": 17,
+        "🗣️ 대화맛집": 14
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.5159,
+        "longitude": 127.0216,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_10",
+      "email": "junho.shin@nps.or.kr",
+      "name": "신준호",
+      "gender": "male",
+      "birthDate": "1995-05-18",
+      "age": 29,
+      "company": "국민연금공단 (기금운용본부)",
+      "photoUrl": "/assets/profiles/man_5.svg",
+      "bio": "주말엔 자전거 라이딩과 감성 카페 다니는 걸 좋아해요. 성격은 차분하지만 유쾌한 반전 매력이 있습니다!",
+      "interests": [
+        "☕ 카페투어",
+        "🏃 러닝/마라톤",
+        "🏕️ 캠핑/글램핑",
+        "🍣 맛집탐방"
+      ],
+      "isOnline": false,
+      "verifiedEmail": true,
+      "createdAt": 1787876201589,
+      "lastActive": 1788392921589,
+      "popularity": 110,
+      "isTestAccount": true,
+      "stickers": {
+        "☕ 커피메이트": 12,
+        "✨ 훈훈비주얼": 9
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4769,
+        "longitude": 127.05460000000001,
+        "lastUpdated": 1788394601589
+      }
+    },
+    {
+      "id": "user_11",
+      "email": "soyeon.lee@gg.go.kr",
+      "name": "이소연",
+      "gender": "female",
+      "birthDate": "1998-09-09",
+      "age": 26,
+      "company": "경기도청 (도시정책관)",
+      "photoUrl": "/assets/profiles/woman_1.svg",
+      "bio": "자연 속에서 여유롭게 산책하고 맛있는 브런치 먹는 걸 좋아해요. 진솔하고 따뜻한 인연을 기다립니다 🌿",
+      "interests": [
+        "🎨 전시회/미술",
+        "🎬 영화/넷플릭스",
+        "🍷 와인/위스키",
+        "📸 사진촬영"
+      ],
+      "isOnline": true,
+      "verifiedEmail": true,
+      "createdAt": 1788049001589,
+      "lastActive": 1788392741589,
+      "popularity": 122,
+      "isTestAccount": true,
+      "stickers": {
+        "🌟 심쿵매력": 15,
+        "🌸 인간비타민": 13
+      },
+      "approvalStatus": "approved",
+      "location": {
+        "latitude": 37.4979,
+        "longitude": 127.0276,
+        "lastUpdated": 1788394601589
+      }
+    }
+  ],
+  "adminAccounts": [
+    {
+      "id": "admin_master",
+      "email": "admin@kepco.co.kr",
+      "name": "최고 관리자 (KEPCO)",
+      "department": "한국전력공사 시스템총괄실",
+      "isMaster": true,
+      "agencyDomain": "kepco.co.kr",
+      "agencyName": "한국전력공사 (총괄)",
+      "passwordPlain": "12101074",
+      "eventBoxesRemaining": 999999,
+      "createdAt": 1700000000000
+    },
+    {
+      "id": "admin_agency_kepco1",
+      "email": "hr_manager@kepco.co.kr",
+      "name": "김전력 (인사운영)",
+      "department": "한국전력공사 인재경영처",
+      "isMaster": false,
+      "agencyDomain": "kepco.co.kr",
+      "agencyName": "한국전력공사",
+      "passwordPlain": "1234",
+      "eventBoxesRemaining": 1000,
+      "createdAt": 1700000001000,
+      "createdBy": "admin@kepco.co.kr"
+    },
+    {
+      "id": "admin_agency_kepco2",
+      "email": "welfare@kepco.co.kr",
+      "name": "이복지 (사내복지)",
+      "department": "한국전력공사 노사복지부",
+      "isMaster": false,
+      "agencyDomain": "kepco.co.kr",
+      "agencyName": "한국전력공사",
+      "passwordPlain": "1234",
+      "eventBoxesRemaining": 1000,
+      "createdAt": 1700000002000,
+      "createdBy": "admin@kepco.co.kr"
+    },
+    {
+      "id": "admin_agency_kwater",
+      "email": "admin@kwater.or.kr",
+      "name": "박수자 (총무부)",
+      "department": "한국수자원공사 경영지원처",
+      "isMaster": false,
+      "agencyDomain": "kwater.or.kr",
+      "agencyName": "한국수자원공사",
+      "passwordPlain": "1234",
+      "eventBoxesRemaining": 1000,
+      "createdAt": 1700000003000,
+      "createdBy": "admin@kepco.co.kr"
+    },
+    {
+      "id": "admin_agency_lh",
+      "email": "admin@lh.or.kr",
+      "name": "최토지 (복지운영)",
+      "department": "한국토지주택공사 복지기획처",
+      "isMaster": false,
+      "agencyDomain": "lh.or.kr",
+      "agencyName": "한국토지주택공사",
+      "passwordPlain": "1234",
+      "eventBoxesRemaining": 1000,
+      "createdAt": 1700000004000,
+      "createdBy": "admin@kepco.co.kr"
+    }
+  ],
+  "adminBoard": [],
+  "adminLogs": [],
+  "userInventories": {},
+  "likes": [],
+  "reports": [],
+  "userPasswords": {
+    "admin@kepco.co.kr": "12101074",
+    "hr_manager@kepco.co.kr": "1234",
+    "welfare@kepco.co.kr": "1234",
+    "admin@kwater.or.kr": "1234",
+    "admin@lh.or.kr": "1234",
+    "jisoo.kim@korea.kr": "1234",
+    "minho.lee@kepco.co.kr": "1234",
+    "sujin.park@lh.or.kr": "1234",
+    "hyunwoo.jung@korail.com": "1234",
+    "chaewon.yoon@seoul.go.kr": "1234",
+    "dohyun.kang@kwater.or.kr": "1234",
+    "eunji.song@nhis.or.kr": "1234",
+    "taehyung.choi@ex.co.kr": "1234",
+    "yuna.han@knto.or.kr": "1234",
+    "junho.shin@nps.or.kr": "1234",
+    "soyeon.lee@gg.go.kr": "1234",
+    "tester1@kepco.co.kr": "test1234"
+  },
+  "chatMessages": {},
+  "firebaseConfig": null,
+  "lastUpdated": 1788394625381
+}

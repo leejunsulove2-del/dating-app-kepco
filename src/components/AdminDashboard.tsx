@@ -231,10 +231,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setGiftLogs(AdminService.getGiftDeliveryLogs(currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain));
   };
 
-  // Live Cloud Firestore Synchronization across all devices
+  // Live Cloud Firestore & Server Synchronization across all devices
   useEffect(() => {
     AdminService.syncFromCloudFirestore().then(() => {
       DatingService.syncFromCloudFirestore().then(() => {
+        const currentUsers = DatingService.getAllUsers();
+        if (currentUsers.length > 0) {
+          ApiSyncService.syncUsers(currentUsers).catch(() => {});
+        }
         refreshAllData();
       });
     });
