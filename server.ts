@@ -29,7 +29,7 @@ const DEFAULT_SERVER_ADMINS = [
     isMaster: true,
     agencyDomain: 'kepco.co.kr',
     agencyName: '한국전력공사 (총괄)',
-    passwordPlain: '12101074',
+    passwordPlain: "ADMIN_PASSWORD_SECRET",
     eventBoxesRemaining: 999999,
     createdAt: 1700000000000,
   },
