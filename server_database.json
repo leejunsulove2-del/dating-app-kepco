@@ -447,7 +447,7 @@
   "likes": [],
   "reports": [],
   "userPasswords": {
-    "admin@kepco.co.kr": "12101074",
+    "admin@kepco.co.kr": "ADMIN_PASSWORD_SECRET",
     "hr_manager@kepco.co.kr": "1234",
     "welfare@kepco.co.kr": "1234",
     "admin@kwater.or.kr": "1234",
