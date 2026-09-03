@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Mail,
   Lock,
@@ -8,11 +8,20 @@ import {
   Building2,
   ShieldCheck,
   Send,
+  Loader2,
+  RefreshCw,
+  Clock,
+  Sparkles,
 } from 'lucide-react';
+import confetti from 'canvas-confetti';
 import { DEFAULT_ALLOWED_DOMAINS, DatingService } from '../services/datingService';
 import { AdminService } from '../services/adminService';
+import { FirestoreSyncService } from '../services/firestoreSyncService';
 import { UserProfile, AdminAccount } from '../types';
 import { BirthDatePicker } from './BirthDatePicker';
+
+const PENDING_EMAIL_STORAGE_KEY = 'love_app_pending_approval_email';
+const PENDING_USER_STORAGE_KEY = 'love_app_pending_approval_user';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -25,8 +34,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onSuccess,
   onAdminLogin,
 }) => {
-  type AuthTab = 'login' | 'register';
-  const [activeTab, setActiveTab] = useState<AuthTab>('login');
+  type AuthTab = 'login' | 'register' | 'pending';
+  
+  const [pendingApprovalEmail, setPendingApprovalEmail] = useState<string | null>(() => {
+    return localStorage.getItem(PENDING_EMAIL_STORAGE_KEY);
+  });
+  const [pendingApprovalUser, setPendingApprovalUser] = useState<UserProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem(PENDING_USER_STORAGE_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const [activeTab, setActiveTab] = useState<AuthTab>(() => {
+    return localStorage.getItem(PENDING_EMAIL_STORAGE_KEY) ? 'pending' : 'login';
+  });
 
   // Register Form State (Admin Approval Model)
   const [emailPrefix, setEmailPrefix] = useState('');
@@ -47,12 +71,133 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // Common UI State
   const [isLoading, setIsLoading] = useState(false);
+  const [isCheckingApproval, setIsCheckingApproval] = useState(false);
+  const [approvalCheckNotice, setApprovalCheckNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successModalData, setSuccessModalData] = useState<{
     title: string;
     message: string;
     subText?: string;
   } | null>(null);
+
+  const handleApprovedTransition = useCallback((user: UserProfile) => {
+    try {
+      confetti({
+        particleCount: 80,
+        spread: 70,
+        origin: { y: 0.6 },
+      });
+    } catch {
+      // ignore
+    }
+
+    localStorage.removeItem(PENDING_EMAIL_STORAGE_KEY);
+    localStorage.removeItem(PENDING_USER_STORAGE_KEY);
+    setPendingApprovalEmail(null);
+    setPendingApprovalUser(null);
+    setSuccessModalData(null);
+
+    // Ensure online status and persist user
+    user.isOnline = true;
+    user.lastActive = Date.now();
+    DatingService.saveCurrentUser(user);
+
+    onSuccess(user, false);
+  }, [onSuccess]);
+
+  // =========================================================================
+  // REAL-TIME AUTO-LOGIN LISTENER (Cross-device approval sync: Device 2 -> Device 1)
+  // =========================================================================
+  useEffect(() => {
+    if (!isOpen || !pendingApprovalEmail) return;
+
+    const targetEmail = pendingApprovalEmail.toLowerCase().trim();
+
+    // 1. Check directly from Cloud Firestore on mount or email set
+    let isCancelled = false;
+    const checkFreshFromCloud = async () => {
+      try {
+        const cloudUsers = await FirestoreSyncService.getAllUsers();
+        if (isCancelled || !cloudUsers || cloudUsers.length === 0) return;
+        
+        DatingService.updateInternalUsersData(cloudUsers);
+        const matched = cloudUsers.find(
+          (u) => u.email.toLowerCase() === targetEmail
+        );
+        if (matched && matched.approvalStatus === 'approved') {
+          handleApprovedTransition(matched);
+        }
+      } catch (err) {
+        console.warn('Initial cloud approval check failed:', err);
+      }
+    };
+    checkFreshFromCloud();
+
+    // 2. Real-time Firestore stream subscription
+    const unsubscribe = DatingService.subscribeToLiveUsers((liveUsers) => {
+      if (isCancelled || !liveUsers || liveUsers.length === 0) return;
+      const matched = liveUsers.find(
+        (u) => u.email.toLowerCase() === targetEmail
+      );
+      if (matched) {
+        if (matched.approvalStatus === 'approved') {
+          handleApprovedTransition(matched);
+        } else if (matched.approvalStatus === 'rejected') {
+          setError(`[가입 반려] 소속 기관 관리자에 의해 가입이 반려되었습니다. (사유: ${matched.rejectionReason || '소속 확인 불가'})`);
+          localStorage.removeItem(PENDING_EMAIL_STORAGE_KEY);
+          localStorage.removeItem(PENDING_USER_STORAGE_KEY);
+          setPendingApprovalEmail(null);
+          setPendingApprovalUser(null);
+          setActiveTab('login');
+        }
+      }
+    });
+
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+    };
+  }, [isOpen, pendingApprovalEmail, handleApprovedTransition]);
+
+  // Manual check button handler
+  const handleManualCheckApproval = async () => {
+    if (!pendingApprovalEmail) return;
+    setIsCheckingApproval(true);
+    setApprovalCheckNotice(null);
+    setError(null);
+
+    try {
+      const cloudUsers = await FirestoreSyncService.getAllUsers();
+      if (cloudUsers && cloudUsers.length > 0) {
+        DatingService.updateInternalUsersData(cloudUsers);
+        const targetEmail = pendingApprovalEmail.toLowerCase().trim();
+        const matched = cloudUsers.find(
+          (u) => u.email.toLowerCase() === targetEmail
+        );
+
+        if (matched && matched.approvalStatus === 'approved') {
+          setApprovalCheckNotice('승인이 확인되었습니다! 로그인으로 전환합니다...');
+          setTimeout(() => {
+            handleApprovedTransition(matched);
+          }, 400);
+          return;
+        } else if (matched && matched.approvalStatus === 'rejected') {
+          setError(`[가입 반려] 사유: ${matched.rejectionReason || '소속 확인 불가'}`);
+          localStorage.removeItem(PENDING_EMAIL_STORAGE_KEY);
+          localStorage.removeItem(PENDING_USER_STORAGE_KEY);
+          setPendingApprovalEmail(null);
+          setPendingApprovalUser(null);
+          setActiveTab('login');
+          return;
+        }
+      }
+      setApprovalCheckNotice('아직 관리자(단말 2)의 승인 대기 중입니다. 승인 즉시 자동 로그인됩니다.');
+    } catch {
+      setApprovalCheckNotice('서버 동기화 상태를 확인 중입니다. 잠시 후 다시 시도해주세요.');
+    } finally {
+      setIsCheckingApproval(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -125,14 +270,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    // Show Success Modal for Admin Approval Notice
-    setSuccessModalData({
-      title: '가입 신청 완료 (소속 기관 승인 대기)',
-      message: `[${res.user?.company || '소속 기관'}] 가입 신청서가 성공적으로 제출되었습니다.`,
-      subText: '사칭 및 도용 방지를 위해 해당 기관 관리자의 승인 심사 완료 후 로그인이 가능합니다. 승인 즉시 환영박스 1개가 자동 지급됩니다.',
-    });
+    // Save pending state so Device 1 listens for approval from Device 2
+    localStorage.setItem(PENDING_EMAIL_STORAGE_KEY, fullSignupEmail);
+    if (res.user) {
+      localStorage.setItem(PENDING_USER_STORAGE_KEY, JSON.stringify(res.user));
+      setPendingApprovalUser(res.user);
+    }
+    setPendingApprovalEmail(fullSignupEmail);
+    setActiveTab('pending');
 
-    // Reset Form
+    // Reset form fields
     setEmailPrefix('');
     setRegisterPassword('');
     setRegisterPasswordConfirm('');
@@ -141,7 +288,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   // ==========================================
   // 2. UNIFIED LOGIN (Member & Admin)
   // ==========================================
-  const handleUserLogin = (e: React.FormEvent) => {
+  const handleUserLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -166,8 +313,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     // 2) If not an admin, proceed with standard member authentication
-    const userRes = DatingService.loginUserWithApprovalCheck(cleanEmail, cleanPassword);
+    const userRes = await DatingService.loginUserWithApprovalCheck(cleanEmail, cleanPassword);
     setIsLoading(false);
+
+    if (userRes.isPendingApproval) {
+      setPendingApprovalEmail(cleanEmail);
+      setActiveTab('pending');
+      setError(null);
+      setApprovalCheckNotice('소속 기관 관리자(단말 2)의 승인을 대기하고 있습니다. 승인 즉시 자동 로그인됩니다.');
+      return;
+    }
 
     if (!userRes.success) {
       setError(userRes.message || '로그인에 실패했습니다.');
@@ -194,13 +349,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             철저한 기관 인증 및 관리자 승인 기반의 안심 소통 플랫폼
           </p>
 
-          {/* Navigation Tabs (2 Tabs: Login & Agency Registration) */}
-          <div className="grid grid-cols-2 gap-1 bg-stone-900 p-1 rounded-xl mt-4 border border-stone-800">
+          {/* Navigation Tabs (3 Tabs when pending, otherwise 2 Tabs) */}
+          <div className={`grid ${pendingApprovalEmail ? 'grid-cols-3' : 'grid-cols-2'} gap-1 bg-stone-900 p-1 rounded-xl mt-4 border border-stone-800`}>
             <button
               type="button"
               onClick={() => {
                 setActiveTab('login');
                 setError(null);
+                setApprovalCheckNotice(null);
               }}
               className={`py-2 text-xs font-bold rounded-lg transition-all ${
                 activeTab === 'login'
@@ -215,6 +371,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               onClick={() => {
                 setActiveTab('register');
                 setError(null);
+                setApprovalCheckNotice(null);
               }}
               className={`py-2 text-xs font-bold rounded-lg transition-all ${
                 activeTab === 'register'
@@ -224,6 +381,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             >
               기관 가입 신청
             </button>
+            {pendingApprovalEmail && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('pending');
+                  setError(null);
+                }}
+                className={`py-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+                  activeTab === 'pending'
+                    ? 'bg-amber-600 text-white shadow-md'
+                    : 'text-amber-400 hover:text-amber-200'
+                }`}
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+                <span>승인 대기중</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -234,6 +411,95 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="p-3.5 rounded-xl bg-rose-950/80 border border-rose-500/40 text-rose-200 flex items-start gap-2.5 animate-fadeIn">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
               <span className="leading-relaxed">{error}</span>
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB: PENDING APPROVAL & REAL-TIME AUTO-LOGIN VIEW */}
+          {/* ========================================================================= */}
+          {activeTab === 'pending' && pendingApprovalEmail && (
+            <div className="space-y-4">
+              <div className="p-5 rounded-2xl bg-gradient-to-b from-amber-950/40 to-stone-950 border border-amber-500/30 text-center space-y-3">
+                <div className="relative w-14 h-14 mx-auto flex items-center justify-center">
+                  <div className="absolute inset-0 rounded-full bg-amber-500/20 animate-ping"></div>
+                  <div className="relative w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center">
+                    <Clock className="w-6 h-6 animate-pulse" />
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-base font-bold text-white tracking-tight">
+                    소속 기관 관리자 가입 승인 대기 중
+                  </h3>
+                  <p className="text-xs text-amber-200/90 mt-1">
+                    단말 2(소속 기관 관리자)에서 [가입 승인]을 완료하면,
+                    <br />
+                    <strong className="text-white underline decoration-amber-400 underline-offset-2">
+                      이 화면에서 자동으로 즉시 로그인되어 시작됩니다.
+                    </strong>
+                  </p>
+                </div>
+
+                {/* Real-time sync badge */}
+                <div className="flex items-center justify-center gap-2 text-[11px] text-emerald-400 bg-emerald-950/50 border border-emerald-500/40 py-2 px-3 rounded-xl font-medium">
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                  </span>
+                  <span>단말 2의 가입 승인 신호를 실시간 수신 중...</span>
+                </div>
+              </div>
+
+              {/* Application Details Summary */}
+              <div className="bg-stone-950 border border-stone-800 rounded-xl p-3.5 space-y-2 text-stone-300">
+                <div className="flex items-center justify-between text-xs border-b border-stone-800/80 pb-2">
+                  <span className="text-stone-400">신청 성명</span>
+                  <span className="font-bold text-stone-100">{pendingApprovalUser?.name || '신청 회원'}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs border-b border-stone-800/80 pb-2">
+                  <span className="text-stone-400">신청 이메일</span>
+                  <span className="font-bold text-amber-400">{pendingApprovalEmail}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-stone-400">소속 기관</span>
+                  <span className="font-bold text-stone-100">{pendingApprovalUser?.company || '공공기관'}</span>
+                </div>
+              </div>
+
+              {approvalCheckNotice && (
+                <div className="p-3 bg-stone-950 border border-amber-500/30 rounded-xl text-amber-300 text-center text-xs">
+                  {approvalCheckNotice}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleManualCheckApproval}
+                  disabled={isCheckingApproval}
+                  className="w-full py-2.5 bg-amber-600 hover:bg-amber-500 text-white font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-950/40"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isCheckingApproval ? 'animate-spin' : ''}`} />
+                  <span>{isCheckingApproval ? '서버 승인 상태 확인 중...' : '지금 승인 여부 즉시 확인하기'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.removeItem(PENDING_EMAIL_STORAGE_KEY);
+                    localStorage.removeItem(PENDING_USER_STORAGE_KEY);
+                    setPendingApprovalEmail(null);
+                    setPendingApprovalUser(null);
+                    setActiveTab('login');
+                    setError(null);
+                    setApprovalCheckNotice(null);
+                  }}
+                  className="w-full py-2 bg-stone-800/80 hover:bg-stone-700 text-stone-300 font-medium rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  다른 계정으로 로그인 / 신청 취소
+                </button>
+              </div>
             </div>
           )}
 

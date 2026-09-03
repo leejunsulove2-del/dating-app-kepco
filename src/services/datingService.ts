@@ -1031,18 +1031,18 @@ export class DatingService {
   }
 
   /**
-   * User Login with Agency Approval Status Check
+   * User Login with Agency Approval Status Check (with real-time Cloud Firestore sync)
    */
-  public static loginUserWithApprovalCheck(
+  public static async loginUserWithApprovalCheck(
     email: string,
     passwordPlain: string
-  ): {
+  ): Promise<{
     success: boolean;
     user?: UserProfile;
     isPendingApproval?: boolean;
     isRejected?: boolean;
     message?: string;
-  } {
+  }> {
     const cleanEmail = email.toLowerCase().trim();
 
     // Check banned email
@@ -1055,8 +1055,23 @@ export class DatingService {
       };
     }
 
-    const allUsers = this.getAllUsers();
-    const user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+    // Try local lookup first
+    let allUsers = this.getAllUsers();
+    let user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+
+    // If not found locally or currently marked as pending/rejected, query Cloud Firestore to get the freshest approval status
+    if (!user || user.approvalStatus === 'pending') {
+      try {
+        const cloudUsers = await FirestoreSyncService.getAllUsers();
+        if (cloudUsers && cloudUsers.length > 0) {
+          this.updateInternalUsersData(cloudUsers);
+          allUsers = this.getAllUsers();
+          user = allUsers.find((u) => u.email.toLowerCase() === cleanEmail);
+        }
+      } catch (e) {
+        console.warn('Failed to refresh users from Cloud Firestore on login check:', e);
+      }
+    }
 
     if (!user) {
       return {

@@ -180,6 +180,24 @@ export default function App() {
     DatingService.initDatabase(currentLocation.latitude, currentLocation.longitude);
     requestAccurateLocation(true);
 
+    // 🚀 Multi-device real-time users synchronization
+    const unsubLiveUsers = DatingService.subscribeToLiveUsers(() => {
+      if (currentUserRef.current) {
+        const isAntennaOn = ItemService.isBoostRadiusActive(currentUserRef.current.id);
+        const effectiveFilter = {
+          ...filterRef.current,
+          maxDistanceKm: isAntennaOn ? filterRef.current.maxDistanceKm : 1.0,
+        };
+        const filteredNearby = DatingService.fetchNearbyUsers(
+          currentLocationRef.current.latitude,
+          currentLocationRef.current.longitude,
+          currentUserRef.current.id,
+          effectiveFilter
+        );
+        setNearbyUsers(filteredNearby);
+      }
+    });
+
     let unsubLiveLocation: (() => void) | null = null;
 
     if (currentUser) {
@@ -233,6 +251,7 @@ export default function App() {
     }
 
     return () => {
+      if (unsubLiveUsers) unsubLiveUsers();
       if (unsubLiveLocation) unsubLiveLocation();
     };
   }, [currentUser?.id]);

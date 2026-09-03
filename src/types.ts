@@ -83,6 +83,8 @@ export interface UserProfile {
   rejectionReason?: string;
   approvedAt?: number;
   approvedByAdmin?: string;
+  rejectedAt?: number;
+  rejectedByAdmin?: string;
 }
 
 export type ItemId =

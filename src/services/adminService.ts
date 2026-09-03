@@ -435,7 +435,13 @@ export class AdminService {
     // Ensure starter inventory (10 message tickets, 0 others)
     ItemService.getInventory(target.id);
 
-    DatingService.saveCurrentUser(target);
+    // Save to local users list & database
+    DatingService.saveUser(target);
+
+    // Explicitly sync to Cloud Firestore for instant multi-device propagation
+    FirestoreSyncService.saveUser(target).catch((err) => {
+      console.warn('Failed to sync approved user to Cloud Firestore:', err);
+    });
 
     return {
       success: true,
@@ -460,8 +466,16 @@ export class AdminService {
 
     target.approvalStatus = 'rejected';
     target.rejectionReason = reason.trim() || '소속 기관 확인 불가 또는 사칭 의심';
+    target.rejectedAt = Date.now();
+    target.rejectedByAdmin = adminEmail;
 
-    DatingService.saveCurrentUser(target);
+    // Save to local users list & database
+    DatingService.saveUser(target);
+
+    // Explicitly sync to Cloud Firestore for instant multi-device propagation
+    FirestoreSyncService.saveUser(target).catch((err) => {
+      console.warn('Failed to sync rejected user to Cloud Firestore:', err);
+    });
 
     return {
       success: true,
