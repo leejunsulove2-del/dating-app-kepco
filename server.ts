@@ -15,10 +15,18 @@ interface ServerDatabase {
   userPasswords: Record<string, string>;
   chatMessages: Record<string, any[]>;
   firebaseConfig: any | null;
+  settings?: {
+    autoApprove60sEnabled: boolean;
+    updatedAt?: number;
+    updatedBy?: string;
+  };
   lastUpdated: number;
 }
 
 const DB_FILE_PATH = path.join(process.cwd(), 'server_database.json');
+
+// Master admin password securely provided via environment variable (GitHub repository secrets)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 
 const DEFAULT_SERVER_ADMINS = [
   {
@@ -29,7 +37,7 @@ const DEFAULT_SERVER_ADMINS = [
     isMaster: true,
     agencyDomain: 'kepco.co.kr',
     agencyName: '한국전력공사 (총괄)',
-    passwordPlain: "ADMIN_PASSWORD_SECRET",
+    passwordPlain: ADMIN_PASSWORD,
     eventBoxesRemaining: 999999,
     createdAt: 1700000000000,
   },
@@ -118,6 +126,7 @@ function loadDatabase(): ServerDatabase {
         userPasswords: parsed.userPasswords || {},
         chatMessages: parsed.chatMessages || {},
         firebaseConfig: parsed.firebaseConfig || null,
+        settings: parsed.settings || { autoApprove60sEnabled: false },
         lastUpdated: parsed.lastUpdated || Date.now(),
       };
     }
@@ -162,11 +171,14 @@ function loadDatabase(): ServerDatabase {
     }
   });
 
-  try {
-    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(dbData, null, 2), 'utf-8');
-  } catch (err) {
-    console.warn('[Server DB] Could not write initial DB file:', err);
+  // Force ensure master admin password in memory matches ADMIN_PASSWORD environment variable
+  const masterAdmin = dbData.adminAccounts.find(
+    (a) => a.isMaster || a.email?.toLowerCase() === 'admin@kepco.co.kr'
+  );
+  if (masterAdmin) {
+    masterAdmin.passwordPlain = ADMIN_PASSWORD;
   }
+  dbData.userPasswords['admin@kepco.co.kr'] = ADMIN_PASSWORD;
 
   return dbData;
 }
@@ -176,15 +188,57 @@ let db = loadDatabase();
 function saveDatabase() {
   try {
     db.lastUpdated = Date.now();
-    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(db, null, 2), 'utf-8');
+    // Create safe copy for file persistence to avoid writing raw ADMIN_PASSWORD to git
+    const safeCopy = JSON.parse(JSON.stringify(db));
+    const masterInCopy = safeCopy.adminAccounts?.find(
+      (a: any) => a.isMaster || a.email?.toLowerCase() === 'admin@kepco.co.kr'
+    );
+    if (masterInCopy) {
+      masterInCopy.passwordPlain = '__ADMIN_PASSWORD_ENV__';
+    }
+    if (safeCopy.userPasswords && safeCopy.userPasswords['admin@kepco.co.kr']) {
+      safeCopy.userPasswords['admin@kepco.co.kr'] = '__ADMIN_PASSWORD_ENV__';
+    }
+    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(safeCopy, null, 2), 'utf-8');
   } catch (err) {
     console.error('[Server DB] Error saving persistent database:', err);
   }
 }
 
+function checkAndAutoApprovePendingUsers(): boolean {
+  if (!db.settings?.autoApprove60sEnabled) return false;
+  const now = Date.now();
+  let changed = false;
+
+  for (const user of db.users) {
+    if (user.approvalStatus === 'pending') {
+      const created = user.createdAt || now;
+      if (now - created >= 60000) {
+        user.approvalStatus = 'approved';
+        user.approvedAt = now;
+        user.approvedByAdmin = '시스템 자동 승인 (기관담당자 60초 설정)';
+        user.verifiedEmail = true;
+        user.updatedAt = now;
+        changed = true;
+        console.log(`[Server DB] ⚡ 60초 경과 자동 승인 완료 (관리자 오프라인 지원): ${user.name} (${user.email})`);
+      }
+    }
+  }
+
+  if (changed) {
+    saveDatabase();
+  }
+  return changed;
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Background ticker for 60s auto-approval (every 5 seconds)
+  setInterval(() => {
+    checkAndAutoApprovePendingUsers();
+  }, 5000);
 
   app.use(express.json({ limit: '20mb' }));
 
@@ -193,6 +247,7 @@ async function startServer() {
   // =========================================================================
 
   app.get('/api/health', (req, res) => {
+    checkAndAutoApprovePendingUsers();
     const pendingCount = db.users.filter((u) => u.approvalStatus === 'pending').length;
     res.json({
       status: 'ok',
@@ -201,11 +256,51 @@ async function startServer() {
       adminsCount: db.adminAccounts.length,
       lastUpdated: db.lastUpdated,
       firebaseConfigured: Boolean(db.firebaseConfig && db.firebaseConfig.projectId),
+      autoApprove60sEnabled: Boolean(db.settings?.autoApprove60sEnabled),
     });
+  });
+
+  // System Settings API (60s Auto-Approval DB Persistence)
+  app.get('/api/sync/settings', (req, res) => {
+    checkAndAutoApprovePendingUsers();
+    res.json({
+      autoApprove60sEnabled: Boolean(db.settings?.autoApprove60sEnabled),
+      settings: db.settings || { autoApprove60sEnabled: false },
+    });
+  });
+
+  app.post('/api/sync/settings', (req, res) => {
+    const { autoApprove60sEnabled, updatedBy } = req.body;
+    if (!db.settings) {
+      db.settings = { autoApprove60sEnabled: false };
+    }
+    db.settings.autoApprove60sEnabled = Boolean(autoApprove60sEnabled);
+    db.settings.updatedAt = Date.now();
+    db.settings.updatedBy = updatedBy || 'admin';
+    saveDatabase();
+    console.log(`[Server DB] 💾 시스템 설정 DB 기록 완료: autoApprove60sEnabled=${db.settings.autoApprove60sEnabled} (설정자: ${db.settings.updatedBy})`);
+    checkAndAutoApprovePendingUsers();
+    res.json({ success: true, settings: db.settings, autoApprove60sEnabled: db.settings.autoApprove60sEnabled });
+  });
+
+  // User location update endpoint
+  app.post('/api/sync/user-location', (req, res) => {
+    const { userId, location } = req.body;
+    if (userId && location) {
+      const target = db.users.find((u) => u.id === userId);
+      if (target) {
+        target.location = location;
+        target.lastActive = Date.now();
+        target.updatedAt = Date.now();
+        saveDatabase();
+      }
+    }
+    res.json({ success: true });
   });
 
   // 1. Full Database Sync
   app.get('/api/sync/all', (req, res) => {
+    checkAndAutoApprovePendingUsers();
     res.json({
       users: db.users,
       adminAccounts: db.adminAccounts,
@@ -216,16 +311,19 @@ async function startServer() {
       reports: db.reports,
       userPasswords: db.userPasswords,
       firebaseConfig: db.firebaseConfig,
+      settings: db.settings,
       lastUpdated: db.lastUpdated,
     });
   });
 
   // 2. Users Management
   app.get('/api/sync/users', (req, res) => {
+    checkAndAutoApprovePendingUsers();
     res.json(db.users);
   });
 
   app.get('/api/sync/pending-users', (req, res) => {
+    checkAndAutoApprovePendingUsers();
     const pending = db.users.filter((u) => u.approvalStatus === 'pending');
     res.json(pending);
   });
@@ -335,6 +433,39 @@ async function startServer() {
     db.users = db.users.filter((u) => u.id !== id);
     saveDatabase();
     res.json({ success: true });
+  });
+
+  // Direct Admin Login Verification using server-side ADMIN_PASSWORD
+  app.post('/api/auth/admin-login', (req, res) => {
+    const { email, passwordPlain } = req.body;
+    if (!email || !passwordPlain) {
+      return res.status(400).json({ success: false, message: '이메일과 비밀번호를 입력해주세요.' });
+    }
+    const cleanEmail = String(email).toLowerCase().trim();
+
+    // 1. Check Master Admin
+    if (cleanEmail === 'admin@kepco.co.kr' && passwordPlain === ADMIN_PASSWORD) {
+      const master = db.adminAccounts.find((a) => a.email?.toLowerCase() === 'admin@kepco.co.kr') || DEFAULT_SERVER_ADMINS[0];
+      return res.json({
+        success: true,
+        isAdmin: true,
+        adminAccount: { ...master, passwordPlain: ADMIN_PASSWORD },
+      });
+    }
+
+    // 2. Check Agency Sub-Admins
+    const found = db.adminAccounts.find(
+      (a) => a.email?.toLowerCase() === cleanEmail && a.passwordPlain === passwordPlain
+    );
+    if (found) {
+      return res.json({
+        success: true,
+        isAdmin: true,
+        adminAccount: found,
+      });
+    }
+
+    return res.status(401).json({ success: false, message: '관리자 계정 정보 또는 비밀번호가 일치하지 않습니다.' });
   });
 
   // Check user existence & approval status directly

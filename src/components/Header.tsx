@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
         )}
       </div>
 
-      {/* Center Location Sync Status (120s / Desktop) */}
+      {/* Center Location Sync Status (60s / Desktop) */}
       <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-full text-xs text-stone-700">
         <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
         <span className="font-semibold text-stone-600">위치 전송:</span>
@@ -79,7 +79,7 @@ export const Header: React.FC<HeaderProps> = ({
           onClick={onManualRefresh}
           disabled={isSyncing}
           className="p-1 hover:text-rose-600 text-stone-400 transition cursor-pointer"
-          title="지금 위치 전송 및 동기화"
+          title="지금 위치 전송 및 주변 30km 동기화"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin text-rose-500' : ''}`} />
         </button>

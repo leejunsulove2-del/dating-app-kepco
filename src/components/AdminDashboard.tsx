@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   FileText,
   Clock,
+  Timer,
   Gift,
   CheckCircle2,
   Trash2,
@@ -62,6 +63,7 @@ import { FirebaseChatService } from '../services/firebaseChatService';
 import { ItemService } from '../services/itemService';
 import { ApiSyncService } from '../services/apiSyncService';
 import { FirestoreSyncService } from '../services/firestoreSyncService';
+import { FirebaseRtdbRestService } from '../services/firebaseRtdbRestService';
 import { isFirebaseConfigured, getStoredFirebaseConfig, saveCustomFirebaseConfig, clearCustomFirebaseConfig, FirebaseProjectConfig } from '../services/firebaseConfig';
 import { calculateAge, formatDistance, getUserActiveStatus } from '../utils/geo';
 import { getAvatarForUser, handleAvatarError } from '../utils/avatarUtils';
@@ -105,6 +107,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Feedback Notification Toast
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // 60-Second Auto-Approval Mode State (Persistent in Database & Browser)
+  const AUTO_APPROVE_STORAGE_KEY = 'love_app_admin_auto_approve_60s';
+  const [autoApprove60sEnabled, setAutoApprove60sEnabled] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(AUTO_APPROVE_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [autoApproveTick, setAutoApproveTick] = useState(0);
+
+  // Load persistent auto-approval setting from database on mount
+  useEffect(() => {
+    FirebaseRtdbRestService.getAutoApprove60sSetting().then((val) => {
+      if (typeof val === 'boolean') {
+        setAutoApprove60sEnabled(val);
+        try {
+          localStorage.setItem(AUTO_APPROVE_STORAGE_KEY, String(val));
+        } catch {}
+      }
+    });
+  }, []);
+
+  const toggleAutoApprove60s = async () => {
+    const nextVal = !autoApprove60sEnabled;
+    setAutoApprove60sEnabled(nextVal);
+    try {
+      localStorage.setItem(AUTO_APPROVE_STORAGE_KEY, String(nextVal));
+    } catch {}
+
+    // Persist to Server Database and Firebase Realtime Database
+    await FirebaseRtdbRestService.saveAutoApprove60sSetting(nextVal, currentAdmin.email);
+
+    showToast(
+      nextVal
+        ? '⚡ [60초 경과 시 자동 승인] 데이터베이스 영구 저장 완료! 관리자가 로그오프하거나 미접속 상태여도 시스템이 계속 자동 심사합니다.'
+        : '⏸️ [60초 경과 시 자동 승인] 비활성화 완료 (데이터베이스 반영): 담당 관리자가 직접 심사 후 수동 승인하는 모드로 전환되었습니다.',
+      nextVal ? 'success' : 'info'
+    );
+  };
 
   // Cloud Database & Firebase Sync States
   const [isFirebaseModalOpen, setIsFirebaseModalOpen] = useState(false);
@@ -259,6 +302,51 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       unsubUsers();
     };
   }, []);
+
+  // =========================================================================
+  // ⏱️ 60-SECOND AUTO-APPROVAL ENGINE
+  // When ON: Checks pending registration requests and automatically approves users after 60 seconds
+  // =========================================================================
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setAutoApproveTick((t) => (t + 1) % 10000);
+
+      if (!autoApprove60sEnabled) return;
+
+      const currentPending = AdminService.getPendingApprovals(
+        currentAdmin.isMaster ? undefined : currentAdmin.agencyDomain
+      );
+      if (currentPending.length === 0) return;
+
+      const now = Date.now();
+      let hasApprovedAny = false;
+
+      for (const u of currentPending) {
+        const createdAt = u.createdAt || now;
+        const elapsedSec = (now - createdAt) / 1000;
+        if (elapsedSec >= 60) {
+          const res = AdminService.approveUserRegistration(
+            u.id,
+            adminProfile.email,
+            `${adminProfile.name} (60초 경과 자동 승인)`
+          );
+          if (res.success) {
+            hasApprovedAny = true;
+            showToast(
+              `⚡ [60초 경과 자동 승인] ${u.name} (${u.company}) 회원 가입이 자동 승인되었습니다. (환영박스 자동 지급)`,
+              'success'
+            );
+          }
+        }
+      }
+
+      if (hasApprovedAny) {
+        refreshAllData();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [autoApprove60sEnabled, currentAdmin, adminProfile]);
 
   // ==========================================
   // TAB 1: MEMBERSHIP APPROVAL ACTIONS
@@ -873,18 +961,77 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           {/* ========================================================================= */}
           {activeTab === 'approvals' && (
             <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-stone-950/70 border border-stone-800/90 p-4 sm:p-5 rounded-2xl shadow-md">
                 <div>
                   <h2 className="text-xl font-bold text-white flex items-center gap-2">
                     <UserCheck className="w-5 h-5 text-rose-400" />
                     <span>신규 회원 가입 요청 심사</span>
-                    <span className="text-sm font-normal text-stone-400">({pendingUsers.length}건 대기)</span>
+                    <span className="text-sm font-semibold text-rose-300 bg-rose-950/60 px-2.5 py-0.5 rounded-full border border-rose-800/60">
+                      {pendingUsers.length}건 대기
+                    </span>
                   </h2>
-                  <p className="text-xs text-stone-400 mt-0.5">
+                  <p className="text-xs text-stone-400 mt-1 max-w-2xl leading-relaxed">
                     공공기관 공식 메일 가입 신청자의 소속 및 프로필을 확인하고 승인합니다. 승인 즉시 정식 로그인과 함께 환영박스가 자동 지급됩니다.
                   </p>
                 </div>
+
+                {/* ⏱️ [60초 경과시 자동 승인] 기능 ON/OFF 버튼 */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
+                  <button
+                    type="button"
+                    onClick={toggleAutoApprove60s}
+                    className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2.5 cursor-pointer shadow-md ${
+                      autoApprove60sEnabled
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-emerald-950/50 border border-emerald-400/40 hover:brightness-110'
+                        : 'bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-700'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      {autoApprove60sEnabled ? (
+                        <span className="relative flex h-2.5 w-2.5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400"></span>
+                        </span>
+                      ) : (
+                        <Clock className="w-4 h-4 text-stone-400" />
+                      )}
+                      <span>[60초 경과시 자동 승인]</span>
+                    </div>
+
+                    <span
+                      className={`px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider ${
+                        autoApprove60sEnabled
+                          ? 'bg-emerald-950/80 text-emerald-200 border border-emerald-400/50'
+                          : 'bg-stone-800 text-stone-400 border border-stone-700'
+                      }`}
+                    >
+                      {autoApprove60sEnabled ? 'ON' : 'OFF'}
+                    </span>
+                  </button>
+                </div>
               </div>
+
+              {/* Status Hint Banner */}
+              {autoApprove60sEnabled ? (
+                <div className="bg-emerald-950/30 border border-emerald-500/30 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs text-emerald-300 animate-fadeIn">
+                  <div className="flex items-center gap-2">
+                    <Timer className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>
+                      <strong>60초 자동 승인 모드 가동 중:</strong> 신청 시점 기준 60초가 경과한 미승인 요청은 시스템이 안전하게 자동 승인합니다.
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-emerald-400/80 font-mono hidden sm:inline">실시간 60초 감시 작동 중</span>
+                </div>
+              ) : (
+                <div className="bg-stone-950/50 border border-stone-800/60 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs text-stone-400">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-stone-400 shrink-0" />
+                    <span>
+                      <strong>수동 심사 모드:</strong> 관리자가 각 회원의 프로필을 직접 확인하고 [가입 승인] 버튼을 눌러 승인합니다. (60초 경과 자동 승인을 원하시면 위 ON 버튼을 클릭하세요)
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {pendingUsers.length === 0 ? (
                 <div className="bg-stone-950/60 border border-stone-800/80 rounded-2xl p-12 text-center space-y-3">
@@ -898,75 +1045,119 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {pendingUsers.map((user, idx) => (
-                    <div
-                      key={`pending-user-${user.id}-${idx}`}
-                      className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex flex-col justify-between hover:border-stone-700 transition-all shadow-md"
-                    >
-                      <div className="space-y-3">
-                        {/* Header Avatar & Basic Info */}
-                        <div className="flex items-center gap-3">
-                          <img
-                            src={user.photoUrl}
-                            alt={user.name}
-                            className="w-14 h-14 rounded-2xl object-cover border-2 border-stone-700 bg-stone-800"
-                          />
-                          <div className="overflow-hidden">
-                            <div className="flex items-center gap-2">
-                              <h4 className="text-sm font-bold text-white truncate">{user.name}</h4>
-                              <span
-                                className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
-                                  user.gender === 'female' ? 'bg-rose-500/20 text-rose-300' : 'bg-blue-500/20 text-blue-300'
-                                }`}
-                              >
-                                {user.gender === 'female' ? '여' : '남'} / {user.age || calculateAge(user.birthDate)}세
-                              </span>
+                  {pendingUsers.map((user, idx) => {
+                    const now = Date.now();
+                    const created = user.createdAt || now;
+                    const elapsedSec = Math.max(0, Math.floor((now - created) / 1000));
+                    const remainingSec = Math.max(0, 60 - elapsedSec);
+                    const progressPercent = Math.min(100, Math.floor((elapsedSec / 60) * 100));
+
+                    return (
+                      <div
+                        key={`pending-user-${user.id}-${idx}`}
+                        className="bg-stone-950/80 border border-stone-800 rounded-2xl p-4 flex flex-col justify-between hover:border-stone-700 transition-all shadow-md"
+                      >
+                        <div className="space-y-3">
+                          {/* Header Avatar & Basic Info */}
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={user.photoUrl}
+                              alt={user.name}
+                              className="w-14 h-14 rounded-2xl object-cover border-2 border-stone-700 bg-stone-800"
+                            />
+                            <div className="overflow-hidden">
+                              <div className="flex items-center gap-2">
+                                <h4 className="text-sm font-bold text-white truncate">{user.name}</h4>
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                    user.gender === 'female' ? 'bg-rose-500/20 text-rose-300' : 'bg-blue-500/20 text-blue-300'
+                                  }`}
+                                >
+                                  {user.gender === 'female' ? '여' : '남'} / {user.age || calculateAge(user.birthDate)}세
+                                </span>
+                              </div>
+                              <p className="text-xs text-stone-400 font-mono truncate">{user.email}</p>
+                              <p className="text-xs font-semibold text-rose-300 truncate mt-0.5">{user.company}</p>
                             </div>
-                            <p className="text-xs text-stone-400 font-mono truncate">{user.email}</p>
-                            <p className="text-xs font-semibold text-rose-300 truncate mt-0.5">{user.company}</p>
+                          </div>
+
+                          {/* Bio & Details */}
+                          <div className="bg-stone-900/90 rounded-xl p-2.5 border border-stone-800 text-xs space-y-1.5">
+                            <p className="text-stone-300 line-clamp-2 italic">
+                              "{user.bio || '자기소개가 작성되지 않았습니다.'}"
+                            </p>
+                            {user.interests && user.interests.length > 0 && (
+                              <div className="flex flex-wrap gap-1 pt-1">
+                                {user.interests.map((tag, tagIdx) => (
+                                  <span key={tagIdx} className="bg-stone-800 text-stone-300 text-[10px] px-2 py-0.5 rounded-md">
+                                    #{tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* ⏱️ Real-time 60s Auto-Approval Status Meter */}
+                          <div className="space-y-1.5 pt-2 border-t border-stone-800/80 text-xs">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-stone-400">
+                                신청: {new Date(created).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                              </span>
+                              {autoApprove60sEnabled ? (
+                                remainingSec > 0 ? (
+                                  <span className="text-amber-400 font-bold flex items-center gap-1 font-mono">
+                                    <Timer className="w-3 h-3 text-amber-400" />
+                                    자동 승인까지 {remainingSec}초
+                                  </span>
+                                ) : (
+                                  <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                    <Zap className="w-3 h-3 text-emerald-400 animate-pulse" />
+                                    60초 경과 (자동 승인 진행)
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-stone-400 font-mono">
+                                  {elapsedSec}초 경과 (수동 대기)
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Progress bar for 60s countdown */}
+                            {autoApprove60sEnabled && (
+                              <div className="w-full bg-stone-900 rounded-full h-1.5 overflow-hidden border border-stone-800/80">
+                                <div
+                                  className={`h-full transition-all duration-1000 ${
+                                    remainingSec <= 10
+                                      ? 'bg-amber-400'
+                                      : 'bg-emerald-500'
+                                  }`}
+                                  style={{ width: `${progressPercent}%` }}
+                                />
+                              </div>
+                            )}
                           </div>
                         </div>
 
-                        {/* Bio & Details */}
-                        <div className="bg-stone-900/90 rounded-xl p-2.5 border border-stone-800 text-xs space-y-1.5">
-                          <p className="text-stone-300 line-clamp-2 italic">
-                            "{user.bio || '자기소개가 작성되지 않았습니다.'}"
-                          </p>
-                          {user.interests && user.interests.length > 0 && (
-                            <div className="flex flex-wrap gap-1 pt-1">
-                              {user.interests.map((tag, idx) => (
-                                <span key={idx} className="bg-stone-800 text-stone-300 text-[10px] px-2 py-0.5 rounded-md">
-                                  #{tag}
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex items-center justify-between text-[11px] text-stone-500 px-1">
-                          <span>신청일시: {new Date(user.createdAt).toLocaleString('ko-KR')}</span>
+                        {/* Approval Action Buttons */}
+                        <div className="flex items-center gap-2 mt-4 pt-3 border-t border-stone-800/80">
+                          <button
+                            onClick={() => handleRejectUser(user.id)}
+                            className="flex-1 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-stone-700 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5 text-rose-400" />
+                            <span>반려</span>
+                          </button>
+                          <button
+                            onClick={() => handleApproveUser(user.id)}
+                            className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-rose-950/40 cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>가입 승인</span>
+                          </button>
                         </div>
                       </div>
-
-                      {/* Approval Action Buttons */}
-                      <div className="flex items-center gap-2 mt-4 pt-3 border-t border-stone-800/80">
-                        <button
-                          onClick={() => handleRejectUser(user.id)}
-                          className="flex-1 py-2 bg-stone-800 hover:bg-stone-700 text-stone-300 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-stone-700"
-                        >
-                          <X className="w-3.5 h-3.5 text-rose-400" />
-                          <span>반려</span>
-                        </button>
-                        <button
-                          onClick={() => handleApproveUser(user.id)}
-                          className="flex-1 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 shadow-md shadow-rose-950/40"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                          <span>가입 승인</span>
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

@@ -1,11 +1,19 @@
-import React, { useState } from 'react';
-import { Camera, Building2, Calendar, User, Heart, Sparkles, Check, Plus, AlertCircle, CheckCircle2, ShieldAlert } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { Camera, Building2, Calendar, User, Heart, Sparkles, Check, Plus, AlertCircle, CheckCircle2, ShieldAlert, Dices, Grid, Search, X } from 'lucide-react';
 import { UserProfile } from '../types';
 import { calculateAge } from '../utils/geo';
 import { INITIAL_INTEREST_TAGS } from '../services/mockProfiles';
 import { DatingService } from '../services/datingService';
 import { AdminService } from '../services/adminService';
-import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
+import {
+  handleAvatarError,
+  getAvatarForUser,
+  SPECIES_CATEGORIES,
+  filterAvatars,
+  getRandomAnimalAvatar,
+  ANIMAL_AVATARS,
+  AnimalAvatarMeta,
+} from '../utils/avatarUtils';
 import { BirthDatePicker } from './BirthDatePicker';
 
 interface ProfileSetupModalProps {
@@ -13,22 +21,6 @@ interface ProfileSetupModalProps {
   initialUser: UserProfile;
   onComplete: (completedUser: UserProfile) => void;
 }
-
-const OFFICIAL_MALE_AVATARS = [
-  '/assets/profiles/man_1.svg',
-  '/assets/profiles/man_2.svg',
-  '/assets/profiles/man_3.svg',
-  '/assets/profiles/man_4.svg',
-  '/assets/profiles/man_5.svg',
-];
-
-const OFFICIAL_FEMALE_AVATARS = [
-  '/assets/profiles/woman_1.svg',
-  '/assets/profiles/woman_2.svg',
-  '/assets/profiles/woman_3.svg',
-  '/assets/profiles/woman_4.svg',
-  '/assets/profiles/woman_5.svg',
-];
 
 export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   isOpen,
@@ -40,16 +32,37 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
   const [birthDate, setBirthDate] = useState(initialUser.birthDate || '1998-05-20');
   const [company, setCompany] = useState(initialUser.company || '');
   const [photoUrl, setPhotoUrl] = useState(
-    initialUser.photoUrl || (gender === 'female' ? OFFICIAL_FEMALE_AVATARS[0] : OFFICIAL_MALE_AVATARS[0])
+    initialUser.photoUrl || getAvatarForUser(gender, initialUser.id)
   );
   const [bio, setBio] = useState(initialUser.bio || '');
   const [interests, setInterests] = useState<string[]>(initialUser.interests || ['☕ 카페투어', '🍷 와인/위스키']);
   const [customInterest, setCustomInterest] = useState('');
   const [error, setError] = useState<string | null>(null);
 
+  // Animal Avatar Picker States
+  const [selectedSpecies, setSelectedSpecies] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isFullPickerOpen, setIsFullPickerOpen] = useState<boolean>(false);
+
+  // Filtered avatars for display
+  const displayedAvatars = useMemo(() => {
+    return filterAvatars(selectedSpecies, searchQuery);
+  }, [selectedSpecies, searchQuery]);
+
+  // Current selected avatar metadata
+  const currentAvatarMeta = useMemo(() => {
+    return ANIMAL_AVATARS.find((a) => a.url === photoUrl);
+  }, [photoUrl]);
+
   if (!isOpen) return null;
 
-  const currentAvatarList = gender === 'female' ? OFFICIAL_FEMALE_AVATARS : OFFICIAL_MALE_AVATARS;
+  const handleRandomAvatar = () => {
+    const random = getRandomAnimalAvatar(selectedSpecies !== 'all' ? selectedSpecies : undefined);
+    if (random) {
+      setPhotoUrl(random.url);
+    }
+  };
+
 
   const handleInterestToggle = (tag: string) => {
     if (interests.includes(tag)) {
@@ -147,58 +160,127 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
             </div>
           )}
 
-          {/* Official Avatar Selection */}
+          {/* Official Animal Avatar Selection (525+ Unique SVG Avatars) */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="block text-xs font-bold text-stone-800">
-                공식 프로필 캐릭터 <span className="text-rose-500">* 필수</span>
+                공식 프로필 캐릭터 (525종 동물 아바타) <span className="text-rose-500">* 필수</span>
               </label>
-              <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 flex items-center gap-1">
-                <ShieldAlert className="w-3 h-3 text-amber-600" />
-                사칭 방지 공식 캐릭터 적용
+              <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-emerald-600" />
+                초경량 고화질 SVG 에셋
               </span>
             </div>
 
-            <div className="flex flex-col sm:flex-row items-center gap-4">
-              <div className="relative shrink-0">
-                <img
-                  src={photoUrl || getAvatarForUser(gender, initialUser.id)}
-                  alt="Profile Preview"
-                  onError={(e) => handleAvatarError(e, gender, initialUser.id)}
-                  className="w-24 h-24 rounded-2xl object-cover border-2 border-rose-300 shadow-md bg-stone-100"
-                />
-              </div>
-              <div className="w-full space-y-2">
-                <p className="text-xs text-stone-600 font-medium">원하시는 공식 캐릭터 아바타를 선택하세요:</p>
-                <div className="flex flex-wrap gap-2">
-                  {currentAvatarList.map((url, i) => (
+            <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-4">
+              <div className="flex flex-col sm:flex-row items-center gap-4">
+                <div className="relative shrink-0 text-center">
+                  <div className="relative inline-block">
+                    <img
+                      src={photoUrl || getAvatarForUser(gender, initialUser.id)}
+                      alt="Profile Preview"
+                      onError={(e) => handleAvatarError(e, gender, initialUser.id)}
+                      className="w-24 h-24 rounded-2xl object-cover border-2 border-rose-400 shadow-md bg-white"
+                    />
                     <button
-                      key={i}
                       type="button"
-                      onClick={() => setPhotoUrl(url)}
-                      className={`w-10 h-10 rounded-xl overflow-hidden border-2 transition ${
-                        photoUrl === url ? 'border-rose-500 scale-105 ring-2 ring-rose-200' : 'border-stone-200 hover:border-stone-400 bg-stone-50'
-                      }`}
+                      onClick={handleRandomAvatar}
+                      title="랜덤 동물 아바타 뽑기"
+                      className="absolute -bottom-2 -right-2 p-1.5 bg-rose-500 hover:bg-rose-600 text-white rounded-full shadow-lg transition active:scale-95"
                     >
-                      <img 
-                        src={url} 
-                        alt={`avatar-${i}`} 
-                        onError={(e) => handleAvatarError(e, gender, `opt_${i}`)}
-                        className="w-full h-full object-cover" 
-                      />
+                      <Dices className="w-4 h-4" />
                     </button>
-                  ))}
-
-                  {/* Direct Photo Registration Button */}
-                  <button
-                    type="button"
-                    onClick={handleDirectUploadAttempt}
-                    className="h-10 px-3 rounded-xl border border-dashed border-stone-300 hover:border-stone-400 bg-stone-50 flex items-center justify-center text-stone-500 text-xs transition"
-                  >
-                    <Camera className="w-3.5 h-3.5 mr-1 text-stone-400" />
-                    직접 사진등록
-                  </button>
+                  </div>
+                  {currentAvatarMeta && (
+                    <div className="mt-2 inline-block px-2 py-0.5 bg-white text-[11px] font-bold text-stone-700 rounded-md border border-stone-200 shadow-xs">
+                      {currentAvatarMeta.koreanSpecies} · {currentAvatarMeta.name}
+                    </div>
+                  )}
                 </div>
+
+                <div className="w-full space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-stone-700 font-bold">동물 종 선택하기:</p>
+                    <button
+                      type="button"
+                      onClick={() => setIsFullPickerOpen(true)}
+                      className="inline-flex items-center gap-1 text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-lg border border-rose-200 transition"
+                    >
+                      <Grid className="w-3.5 h-3.5" />
+                      전체 둘러보기 (525종)
+                    </button>
+                  </div>
+
+                  {/* Species Quick Tabs */}
+                  <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+                    {SPECIES_CATEGORIES.map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setSelectedSpecies(cat.id)}
+                        className={`px-2.5 py-1 text-xs rounded-lg font-medium transition flex items-center gap-1 ${
+                          selectedSpecies === cat.id
+                            ? 'bg-rose-500 text-white shadow-xs'
+                            : 'bg-white text-stone-600 hover:bg-stone-200 border border-stone-200'
+                        }`}
+                      >
+                        <span>{cat.icon}</span>
+                        <span>{cat.name}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Current Species Preview List */}
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-1">
+                    {displayedAvatars.slice(0, 10).map((avatar) => (
+                      <button
+                        key={avatar.id}
+                        type="button"
+                        onClick={() => setPhotoUrl(avatar.url)}
+                        title={avatar.name}
+                        className={`w-11 h-11 shrink-0 rounded-xl overflow-hidden border-2 transition ${
+                          photoUrl === avatar.url
+                            ? 'border-rose-500 scale-110 ring-2 ring-rose-200 shadow-md'
+                            : 'border-stone-200 hover:border-stone-400 bg-white'
+                        }`}
+                      >
+                        <img
+                          src={avatar.url}
+                          alt={avatar.name}
+                          className="w-full h-full object-cover"
+                        />
+                      </button>
+                    ))}
+                    {displayedAvatars.length > 10 && (
+                      <button
+                        type="button"
+                        onClick={() => setIsFullPickerOpen(true)}
+                        className="w-11 h-11 shrink-0 rounded-xl bg-rose-100 text-rose-700 font-bold text-xs flex items-center justify-center border border-rose-300 hover:bg-rose-200 transition"
+                      >
+                        +{displayedAvatars.length - 10}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-1 border-t border-stone-200/60 text-xs">
+                <button
+                  type="button"
+                  onClick={handleRandomAvatar}
+                  className="inline-flex items-center gap-1.5 text-stone-600 hover:text-rose-600 font-medium transition"
+                >
+                  <Dices className="w-3.5 h-3.5 text-rose-500" />
+                  랜덤 추천 아바타 뽑기
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDirectUploadAttempt}
+                  className="text-stone-400 hover:text-stone-500 text-[11px] inline-flex items-center gap-1"
+                >
+                  <Camera className="w-3 h-3" />
+                  직접 사진등록 안내
+                </button>
               </div>
             </div>
           </div>
@@ -230,7 +312,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   type="button"
                   onClick={() => {
                     setGender('female');
-                    setPhotoUrl(OFFICIAL_FEMALE_AVATARS[0]);
+                    setPhotoUrl(getAvatarForUser('female', 0));
                   }}
                   className={`py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
                     gender === 'female' ? 'bg-rose-500 text-white shadow-sm' : 'bg-stone-50 border border-stone-200 text-stone-600'
@@ -242,7 +324,7 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
                   type="button"
                   onClick={() => {
                     setGender('male');
-                    setPhotoUrl(OFFICIAL_MALE_AVATARS[0]);
+                    setPhotoUrl(getAvatarForUser('male', 1));
                   }}
                   className={`py-2 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1 ${
                     gender === 'male' ? 'bg-blue-500 text-white shadow-sm' : 'bg-stone-50 border border-stone-200 text-stone-600'
@@ -362,6 +444,139 @@ export const ProfileSetupModal: React.FC<ProfileSetupModalProps> = ({
             <span>프로필 저장하고 시작하기</span>
           </button>
         </form>
+
+        {/* Full 525+ Animal Avatars Selection Modal */}
+        {isFullPickerOpen && (
+          <div className="fixed inset-0 z-60 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl border border-stone-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="p-4 border-b border-stone-200 flex items-center justify-between bg-stone-50">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500 text-white flex items-center justify-center font-bold text-sm shadow-sm">
+                    🐾
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-stone-900">525종 동물 공식 캐릭터 둘러보기</h3>
+                    <p className="text-[11px] text-stone-500">마음에 드는 귀여운 동물 캐릭터를 자유롭게 골라보세요</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsFullPickerOpen(false)}
+                  className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-200 rounded-full transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Search & Species Filter Bar */}
+              <div className="p-3 border-b border-stone-200 space-y-2 bg-white">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+                  <input
+                    type="text"
+                    placeholder="동물 종 또는 이름 검색 (예: 여우, 곰, 늑대, 기린, 토끼...)"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 hover:text-stone-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+                  {SPECIES_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => setSelectedSpecies(cat.id)}
+                      className={`px-2.5 py-1 text-xs rounded-lg font-medium whitespace-nowrap transition flex items-center gap-1 shrink-0 ${
+                        selectedSpecies === cat.id
+                          ? 'bg-rose-500 text-white shadow-xs'
+                          : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+                      }`}
+                    >
+                      <span>{cat.icon}</span>
+                      <span>{cat.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Avatars Grid */}
+              <div className="p-4 overflow-y-auto flex-1 bg-stone-50/50">
+                <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-7 gap-3">
+                  {displayedAvatars.map((avatar) => {
+                    const isSelected = photoUrl === avatar.url;
+                    return (
+                      <button
+                        key={avatar.id}
+                        type="button"
+                        onClick={() => {
+                          setPhotoUrl(avatar.url);
+                          setIsFullPickerOpen(false);
+                        }}
+                        className={`group flex flex-col items-center p-2 rounded-2xl bg-white border transition duration-150 relative ${
+                          isSelected
+                            ? 'border-rose-500 ring-2 ring-rose-400/40 shadow-md bg-rose-50/30'
+                            : 'border-stone-200 hover:border-rose-300 hover:shadow-sm'
+                        }`}
+                      >
+                        <div className="w-14 h-14 rounded-xl overflow-hidden mb-1.5 bg-stone-100 relative">
+                          <img
+                            src={avatar.url}
+                            alt={avatar.name}
+                            loading="lazy"
+                            className="w-full h-full object-cover group-hover:scale-105 transition duration-200"
+                          />
+                          {isSelected && (
+                            <div className="absolute inset-0 bg-rose-500/20 flex items-center justify-center">
+                              <CheckCircle2 className="w-5 h-5 text-rose-600 bg-white rounded-full" />
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[10px] font-bold text-stone-700 truncate w-full text-center leading-tight">
+                          {avatar.name}
+                        </span>
+                        <span className="text-[9px] text-stone-400">
+                          {avatar.koreanSpecies}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {displayedAvatars.length === 0 && (
+                  <div className="py-12 text-center text-stone-400 space-y-2">
+                    <AlertCircle className="w-8 h-8 mx-auto text-stone-300" />
+                    <p className="text-xs">검색 조건과 일치하는 동물 아바타가 없습니다.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-3 border-t border-stone-200 bg-white flex items-center justify-between text-xs">
+                <span className="text-stone-500 font-medium">
+                  검색된 캐릭터: <strong className="text-rose-600">{displayedAvatars.length}</strong>개
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsFullPickerOpen(false)}
+                  className="px-4 py-1.5 bg-stone-800 hover:bg-stone-900 text-white rounded-xl font-bold transition"
+                >
+                  닫기
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

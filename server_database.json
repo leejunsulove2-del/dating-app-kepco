@@ -384,7 +384,7 @@
       "isMaster": true,
       "agencyDomain": "kepco.co.kr",
       "agencyName": "한국전력공사 (총괄)",
-      "passwordPlain": "ADMIN_PASSWORD_SECRET",
+      "passwordPlain": "__ADMIN_PASSWORD_ENV__",
       "eventBoxesRemaining": 999999,
       "createdAt": 1700000000000
     },
@@ -447,7 +447,7 @@
   "likes": [],
   "reports": [],
   "userPasswords": {
-    "admin@kepco.co.kr": "ADMIN_PASSWORD_SECRET",
+    "admin@kepco.co.kr": "__ADMIN_PASSWORD_ENV__",
     "hr_manager@kepco.co.kr": "1234",
     "welfare@kepco.co.kr": "1234",
     "admin@kwater.or.kr": "1234",
@@ -467,5 +467,10 @@
   },
   "chatMessages": {},
   "firebaseConfig": null,
+  "settings": {
+    "autoApprove60sEnabled": true,
+    "updatedAt": 1788394625381,
+    "updatedBy": "admin@kepco.co.kr"
+  },
   "lastUpdated": 1788394625381
 }

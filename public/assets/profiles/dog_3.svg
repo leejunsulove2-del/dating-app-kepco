@@ -1,11 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
-    <defs><linearGradient id="bg_dog3" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#e0e7ff"/><stop offset="100%" stop-color="#c7d2fe"/></linearGradient></defs>
-    <circle cx="50" cy="50" r="48" fill="url(#bg_dog3)"/>
-    <polygon points="26,45 18,14 46,30" fill="#334155"/><polygon points="28,40 23,22 41,32" fill="#cbd5e1"/>
-    <polygon points="74,45 82,14 54,30" fill="#334155"/><polygon points="72,40 77,22 59,32" fill="#cbd5e1"/>
-    <circle cx="50" cy="54" r="32" fill="#475569"/><polygon points="50,30 38,48 50,44 62,48" fill="#f8fafc"/>
-    <path d="M30,55 Q50,38 70,55 Q72,82 50,84 Q28,82 30,55 Z" fill="#f8fafc"/>
-    <ellipse cx="38" cy="51" rx="4" ry="4.5" fill="#0284c7"/><circle cx="39.5" cy="49.5" r="1.5" fill="#ffffff"/>
-    <ellipse cx="62" cy="51" rx="4" ry="4.5" fill="#0284c7"/><circle cx="63.5" cy="49.5" r="1.5" fill="#ffffff"/>
-    <polygon points="46,60 54,60 50,65" fill="#0f172a"/><path d="M46,67 Q50,71 54,67" stroke="#0f172a" stroke-width="2" fill="none" stroke-linecap="round"/>
-  </svg>
+  <defs>
+    <linearGradient id="bg_dog_3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ddd6fe"/>
+      <stop offset="100%" stop-color="#c4b5fd"/>
+    </linearGradient>
+  </defs>
+  <circle cx="50" cy="50" r="48" fill="url(#bg_dog_3)"/>
+  
+      <!-- Ears -->
+      <polygon points="24,42 14,14 44,26" fill="#ea580c"/>
+      <polygon points="26,38 20,20 38,28" fill="#fed7aa"/>
+      <polygon points="76,42 86,14 56,26" fill="#ea580c"/>
+      <polygon points="74,38 80,20 62,28" fill="#fed7aa"/>
+      <!-- Head -->
+      <ellipse cx="50" cy="56" rx="32" ry="28" fill="#ea580c"/>
+      <ellipse cx="50" cy="64" rx="19" ry="15" fill="#fff7ed"/>
+      <!-- Eyes -->
+      <circle cx="37" cy="49" r="4.5" fill="#1c1917"/>
+      <circle cx="38.5" cy="47.5" r="1.6" fill="#ffffff"/>
+      <circle cx="63" cy="49" r="4.5" fill="#1c1917"/>
+      <circle cx="64.5" cy="47.5" r="1.6" fill="#ffffff"/>
+      <!-- Nose & Mouth -->
+      <ellipse cx="50" cy="61" rx="5" ry="3.5" fill="#1c1917"/>
+      <path d="M46,66 Q50,70 54,66" stroke="#1c1917" stroke-width="2" fill="none" stroke-linecap="round"/>
+      <ellipse cx="28" cy="60" rx="4.5" ry="3" fill="#fb7185" opacity="0.6"/>
+      <ellipse cx="72" cy="60" rx="4.5" ry="3" fill="#fb7185" opacity="0.6"/>
+    
+  <circle cx="37" cy="49" r="8" stroke="#d97706" stroke-width="2" fill="none"/><circle cx="63" cy="49" r="8" stroke="#d97706" stroke-width="2" fill="none"/><line x1="45" y1="49" x2="55" y2="49" stroke="#d97706" stroke-width="2"/>
+</svg>

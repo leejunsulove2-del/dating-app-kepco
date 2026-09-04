@@ -53,6 +53,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     return localStorage.getItem(PENDING_EMAIL_STORAGE_KEY) ? 'pending' : 'login';
   });
 
+  // Ensure clean state when modal opens, preventing residual auto-login after logout
+  useEffect(() => {
+    if (isOpen) {
+      const savedEmail = localStorage.getItem(PENDING_EMAIL_STORAGE_KEY);
+      if (!savedEmail) {
+        setPendingApprovalEmail(null);
+        setPendingApprovalUser(null);
+        setActiveTab('login');
+      }
+    }
+  }, [isOpen]);
+
   // Register Form State (Admin Approval Model)
   const [emailPrefix, setEmailPrefix] = useState('');
   const [selectedDomain, setSelectedDomain] = useState('kepco.co.kr');
@@ -108,9 +120,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // =========================================================================
   // REAL-TIME AUTO-LOGIN LISTENER (Cross-device approval sync: Device 2 -> Device 1)
+  // Only listens and transitions when explicitly on the 'pending' approval view!
   // =========================================================================
   useEffect(() => {
-    if (!isOpen || !pendingApprovalEmail) return;
+    if (!isOpen || !pendingApprovalEmail || activeTab !== 'pending') return;
 
     const targetEmail = pendingApprovalEmail.toLowerCase().trim();
 
@@ -174,7 +187,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       isCancelled = true;
       unsubscribe();
     };
-  }, [isOpen, pendingApprovalEmail, handleApprovedTransition]);
+  }, [isOpen, pendingApprovalEmail, activeTab, handleApprovedTransition]);
 
   // Manual check button handler
   const handleManualCheckApproval = async () => {
@@ -330,7 +343,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setIsLoading(true);
 
     // 1) First check if entered credentials belong to an Administrator (Master or Agency Admin)
-    const adminRes = AdminService.verifyAdminLogin(cleanEmail, cleanPassword);
+    const adminRes = await AdminService.verifyAdminLoginAsync(cleanEmail, cleanPassword);
     if (adminRes.isAdmin && adminRes.adminAccount) {
       setIsLoading(false);
       if (onAdminLogin) {

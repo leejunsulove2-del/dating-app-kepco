@@ -1331,10 +1331,12 @@ export class DatingService {
   }
 
   /**
-   * Log out
+   * Log out - Completely clears active user session and pending approval flags
    */
   public static logout(): void {
     localStorage.removeItem(CURRENT_USER_KEY);
+    localStorage.removeItem('love_app_pending_approval_email');
+    localStorage.removeItem('love_app_pending_approval_user');
   }
 }
 

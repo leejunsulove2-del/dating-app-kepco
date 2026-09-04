@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <linearGradient id="bg_giraffe_3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ddd6fe"/>
+      <stop offset="100%" stop-color="#c4b5fd"/>
+    </linearGradient>
+  </defs>
+  <circle cx="50" cy="50" r="48" fill="url(#bg_giraffe_3)"/>
+  
+      <!-- Horns (Ossicones) -->
+      <line x1="40" y1="35" x2="36" y2="15" stroke="#ca8a04" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="35" cy="14" r="5" fill="#ca8a04"/>
+      <line x1="60" y1="35" x2="64" y2="15" stroke="#ca8a04" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="65" cy="14" r="5" fill="#ca8a04"/>
+      <!-- Ears -->
+      <ellipse cx="20" cy="38" rx="10" ry="6" fill="#fde047" transform="rotate(-20 20 38)"/>
+      <ellipse cx="20" cy="38" rx="6" ry="3" fill="#fef08a" transform="rotate(-20 20 38)"/>
+      <ellipse cx="80" cy="38" rx="10" ry="6" fill="#fde047" transform="rotate(20 80 38)"/>
+      <ellipse cx="80" cy="38" rx="6" ry="3" fill="#fef08a" transform="rotate(20 80 38)"/>
+      <!-- Face -->
+      <ellipse cx="50" cy="54" rx="26" ry="30" fill="#fde047"/>
+      <!-- Spots -->
+      <circle cx="36" cy="38" r="4" fill="#ca8a04"/>
+      <circle cx="64" cy="38" r="4" fill="#ca8a04"/>
+      <ellipse cx="50" cy="34" rx="5" ry="3" fill="#ca8a04"/>
+      <!-- Muzzle -->
+      <ellipse cx="50" cy="68" rx="18" ry="12" fill="#ca8a04" opacity="0.3"/>
+      <!-- Big Gentle Eyes with Lashes -->
+      <ellipse cx="38" cy="48" rx="4.5" ry="5" fill="#1c1917"/>
+      <circle cx="39.5" cy="46.5" r="1.6" fill="#ffffff"/>
+      <path d="M34,44 L31,41" stroke="#1c1917" stroke-width="1.5" stroke-linecap="round"/>
+      <ellipse cx="62" cy="48" rx="4.5" ry="5" fill="#1c1917"/>
+      <circle cx="63.5" cy="46.5" r="1.6" fill="#ffffff"/>
+      <path d="M66,44 L69,41" stroke="#1c1917" stroke-width="1.5" stroke-linecap="round"/>
+      <!-- Nostrils & Smile -->
+      <circle cx="45" cy="66" r="2" fill="#1c1917"/>
+      <circle cx="55" cy="66" r="2" fill="#1c1917"/>
+      <path d="M47,72 Q50,75 53,72" stroke="#1c1917" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+      <ellipse cx="28" cy="56" rx="4" ry="2.5" fill="#fb7185" opacity="0.6"/>
+      <ellipse cx="72" cy="56" rx="4" ry="2.5" fill="#fb7185" opacity="0.6"/>
+    
+  <circle cx="37" cy="49" r="8" stroke="#d97706" stroke-width="2" fill="none"/><circle cx="63" cy="49" r="8" stroke="#d97706" stroke-width="2" fill="none"/><line x1="45" y1="49" x2="55" y2="49" stroke="#d97706" stroke-width="2"/>
+</svg>

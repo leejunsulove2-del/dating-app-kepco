@@ -5,6 +5,7 @@ import { FirebaseChatService } from './services/firebaseChatService';
 import { ItemService } from './services/itemService';
 import { AdminService } from './services/adminService';
 import { FirestoreSyncService } from './services/firestoreSyncService'; // 📍 실시간 백엔드 연결 추가
+import { FirebaseRtdbRestService } from './services/firebaseRtdbRestService';
 import { calculateDistanceKm } from './utils/geo';
 import { AuthModal } from './components/AuthModal';
 import { ProfileSetupModal } from './components/ProfileSetupModal';
@@ -81,25 +82,25 @@ export default function App() {
   const filterRef = useRef<FilterOptions>(filter);
   filterRef.current = filter;
 
-  // 📍 [파이어베이스 Spark 요금제 최적화] 이전 동기화 위치 추적 Ref (50m 이내 미세 이동 시 Firestore 쓰기 스킵)
+  // 📍 [파이어베이스 Spark 요금제 최적화] 이전 동기화 위치 추적 Ref (50m 이내 미세 이동 시 업로드 스킵)
   const lastSyncedLocationRef = useRef<{ latitude: number; longitude: number } | null>(
     currentUser?.location ? { latitude: currentUser.location.latitude, longitude: currentUser.location.longitude } : null
   );
 
-  // 120-Second (2-Minute) batch interval synchronization state (individualized per session/active time)
-  const [syncCountdown, setSyncCountdown] = useState(120);
+  // 60-Second (1-Minute) batch interval synchronization state (individualized per session/active time)
+  const [syncCountdown, setSyncCountdown] = useState(60);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const triggerInventoryReload = useCallback(() => {
     setInventoryVersion((v) => v + 1);
   }, []);
 
-  // 📍 [개정] 기기의 GPS 하드웨어 데이터를 파이어베이스 실시간 서버 인프라에 즉각 스트리밍 (50m 이내 미세 이동 최적화)
+  // 📍 [개정] 기기의 GPS 데이터를 Firebase RTDB REST API로 전송 (50m 이내 미세 이동 시 Pass 최적화)
   const requestAccurateLocation = useCallback((silent = false) => {
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
       if (!silent) setIsSyncing(true);
       navigator.geolocation.getCurrentPosition(
-        (position) => {
+        async (position) => {
           const { latitude, longitude, accuracy } = position.coords;
           const loc: UserLocation = {
             latitude,
@@ -120,16 +121,10 @@ export default function App() {
             DatingService.saveCurrentUser(updatedUser);
             setCurrentUser(updatedUser);
             
-            // 📍 [Spark 무료 플랜 최적화] 이전 동기화 위치와 비교하여 50m(0.05km) 이하 미세 변화 시 Firestore 업로드 생략(스킵)
-            const prev = lastSyncedLocationRef.current;
-            const distanceChangedKm = prev
-              ? calculateDistanceKm(prev.latitude, prev.longitude, latitude, longitude)
-              : 999;
-
-            if (distanceChangedKm > 0.05) {
+            // 📍 [Spark 무료 플랜 최적화 3]: 이전 좌표 대비 50m 이내 미세 이동 시 HTTP 요청 완전 생략(Pass)
+            const uploadRes = await FirebaseRtdbRestService.uploadMyLocation(user, latitude, longitude);
+            if (uploadRes.uploaded) {
               lastSyncedLocationRef.current = { latitude, longitude };
-              // 🚀 실시간 위치 데이터베이스로 전송 단차 연결
-              FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
             }
           }
 
@@ -203,32 +198,9 @@ export default function App() {
       }
     });
 
-    let unsubLiveLocation: (() => void) | null = null;
-
     if (currentUser) {
-      // 🚀 클라우드 파이어베이스 서버의 다른 모든 회원 실시간 위치 구독 개시 (onSnapshot 연동)
-      FirestoreSyncService.subscribeMembersLocation(currentUser.id, (cloudUsers) => {
-        const isAntennaOn = ItemService.isBoostRadiusActive(currentUser.id);
-        const effectiveFilter = {
-          ...filterRef.current,
-          maxDistanceKm: isAntennaOn ? filterRef.current.maxDistanceKm : 1.0,
-        };
-
-        // 메모리 DB 동기화 동시 처리
-        DatingService.updateInternalUsersData(cloudUsers);
-        
-        const filteredNearby = DatingService.fetchNearbyUsers(
-          currentLocationRef.current.latitude,
-          currentLocationRef.current.longitude,
-          currentUser.id,
-          effectiveFilter
-        );
-        setNearbyUsers(filteredNearby);
-      });
-
-      unsubLiveLocation = () => {
-        FirestoreSyncService.unsubscribeMembersLocation();
-      };
+      // 🚀 Firebase RTDB REST API 기반 초기 주변 30km 회원 1회 동기화 (웹소켓 상시연결 완전 배제)
+      performLocationSync();
 
       if (!currentUser.company || !currentUser.birthDate || !currentUser.photoUrl) {
         setTempUserForSetup(currentUser);
@@ -257,52 +229,61 @@ export default function App() {
 
     return () => {
       if (unsubLiveUsers) unsubLiveUsers();
-      if (unsubLiveLocation) unsubLiveLocation();
     };
   }, [currentUser?.id]);
-  // 📍 [개정] 수동 고속 새로고침 및 하드웨어 동기화 핸들러 개조 (120초 주기 및 50m 이내 스킵 최적화)
+
+  // 📍 [Firebase RTDB REST API 최적화] 60초 주기 및 반경 30km 필터링 + 50m 이내 업로드 패스
   const performLocationSync = useCallback(() => {
     const user = currentUserRef.current;
     if (!user) return;
 
     setIsSyncing(true);
 
-    // 하드웨어 실시간 GPS 정보 전송 트래킹 강제 호출
     if (typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition((position) => {
-        const { latitude, longitude } = position.coords;
-        const loc = { latitude, longitude, lastUpdated: Date.now() };
-        
-        setCurrentLocation(loc);
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          const loc = { latitude, longitude, lastUpdated: Date.now() };
+          
+          setCurrentLocation(loc);
 
-        // 📍 [Spark 무료 플랜 최적화] 이전 동기화 위치와 비교하여 50m(0.05km) 이하 미세 변화 시 Firestore 업로드 및 위치 동기화 생략(스킵)
-        const prev = lastSyncedLocationRef.current;
-        const distanceChangedKm = prev
-          ? calculateDistanceKm(prev.latitude, prev.longitude, latitude, longitude)
-          : 999;
+          // 📍 [최적화 1 - 업로드]: 이전 좌표 대비 50m(0.05km) 이내 미세 변화 시 RTDB HTTP 요청 Pass
+          const uploadRes = await FirebaseRtdbRestService.uploadMyLocation(user, latitude, longitude);
+          if (uploadRes.uploaded) {
+            lastSyncedLocationRef.current = { latitude, longitude };
+            DatingService.syncUserLocation(user.id, loc);
+          }
 
-        if (distanceChangedKm > 0.05) {
-          lastSyncedLocationRef.current = { latitude, longitude };
-          FirestoreSyncService.uploadMyLocation(user.id, latitude, longitude);
-          DatingService.syncUserLocation(user.id, loc);
-        }
+          // 📍 [최적화 2 - 다운로드]: 내 위치 기준 '반경 30km' 위도 구간만 REST 쿼리하여 대역폭 절약
+          const nearbyCloud = await FirebaseRtdbRestService.fetchNearbyUsersWithin30Km(
+            latitude,
+            longitude,
+            user.id
+          );
 
-        const isAntennaOn = ItemService.isBoostRadiusActive(user.id);
-        const effectiveFlt = {
-          ...filterRef.current,
-          maxDistanceKm: isAntennaOn ? filterRef.current.maxDistanceKm : 1.0,
-        };
-        const users = DatingService.fetchNearbyUsers(latitude, longitude, user.id, effectiveFlt);
-        setNearbyUsers(users);
-        setSyncCountdown(120);
-        setIsSyncing(false);
-      }, () => {
-        setIsSyncing(false);
-      }, { enableHighAccuracy: true });
+          if (nearbyCloud.length > 0) {
+            DatingService.updateInternalUsersData(nearbyCloud);
+          }
+
+          const isAntennaOn = ItemService.isBoostRadiusActive(user.id);
+          const effectiveFlt = {
+            ...filterRef.current,
+            maxDistanceKm: isAntennaOn ? filterRef.current.maxDistanceKm : 1.0,
+          };
+          const users = DatingService.fetchNearbyUsers(latitude, longitude, user.id, effectiveFlt);
+          setNearbyUsers(users);
+          setSyncCountdown(60);
+          setIsSyncing(false);
+        },
+        () => {
+          setIsSyncing(false);
+        },
+        { enableHighAccuracy: true }
+      );
     }
   }, []);
 
-  // 120초(2분) 단위로 수동 타이머 동기화 보조 가동 (안전 장치)
+  // 📍 60초(1분) 주기 타이머 동기화 가동 (요구사항 2: 1분 주기 타이머)
   useEffect(() => {
     if (!currentUser?.id || !hasLocationConsent) return;
 
@@ -310,7 +291,7 @@ export default function App() {
       setSyncCountdown((prev) => {
         if (prev <= 1) {
           performLocationSync();
-          return 120;
+          return 60;
         }
         return prev - 1;
       });
@@ -437,6 +418,11 @@ export default function App() {
 
   const handleLogout = () => {
     DatingService.logout();
+    try {
+      localStorage.removeItem('love_app_pending_approval_email');
+      localStorage.removeItem('love_app_pending_approval_user');
+      localStorage.removeItem('love_app_current_admin_session');
+    } catch {}
     setCurrentUser(null);
     setHasLocationConsent(false);
     setAuthModalOpen(true);
@@ -450,6 +436,10 @@ export default function App() {
 
   const handleAdminLogout = () => {
     AdminService.saveCurrentAdminSession(null);
+    try {
+      localStorage.removeItem('love_app_pending_approval_email');
+      localStorage.removeItem('love_app_pending_approval_user');
+    } catch {}
     setCurrentAdmin(null);
     setAuthModalOpen(true);
   };

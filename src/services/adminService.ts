@@ -29,7 +29,7 @@ export const MASTER_ADMIN_CREDENTIALS: AdminAccount = {
   isMaster: true,
   agencyDomain: 'kepco.co.kr',
   agencyName: '한국전력공사 (총괄)',
-  passwordPlain: '12101074',
+  passwordPlain: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ADMIN_PASSWORD) ? import.meta.env.VITE_ADMIN_PASSWORD : '',
   eventBoxesRemaining: 999999,
   createdAt: 1700000000000,
 };
@@ -101,13 +101,14 @@ export class AdminService {
     const cleanEmail = email.toLowerCase().trim();
 
     // 1. Check Master Admin
+    const envPass = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ADMIN_PASSWORD) ? import.meta.env.VITE_ADMIN_PASSWORD : '';
     if (
       cleanEmail === MASTER_ADMIN_CREDENTIALS.email.toLowerCase() &&
-      passwordPlain === MASTER_ADMIN_CREDENTIALS.passwordPlain
+      (passwordPlain === MASTER_ADMIN_CREDENTIALS.passwordPlain || (envPass && passwordPlain === envPass))
     ) {
       return {
         isAdmin: true,
-        adminAccount: MASTER_ADMIN_CREDENTIALS,
+        adminAccount: { ...MASTER_ADMIN_CREDENTIALS, passwordPlain },
       };
     }
 
@@ -128,6 +129,36 @@ export class AdminService {
       isAdmin: false,
       error: '관리자 계정 정보(이메일 또는 비밀번호)가 일치하지 않습니다.',
     };
+  }
+
+  /**
+   * Asynchronous admin login verification directly via server endpoint (/api/auth/admin-login)
+   * which respects the ADMIN_PASSWORD environment variable / GitHub repository secrets.
+   */
+  public static async verifyAdminLoginAsync(
+    email: string,
+    passwordPlain: string
+  ): Promise<{ isAdmin: boolean; adminAccount?: AdminAccount; error?: string }> {
+    try {
+      const resp = await fetch('/api/auth/admin-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, passwordPlain }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.success && data.adminAccount) {
+          return {
+            isAdmin: true,
+            adminAccount: data.adminAccount,
+          };
+        }
+      }
+    } catch {
+      // Fallback to local synchronous check if server is unreachable
+    }
+
+    return this.verifyAdminLogin(email, passwordPlain);
   }
 
   /**

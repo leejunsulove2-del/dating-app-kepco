@@ -1,7 +1,13 @@
 {
-  "name": "react-example",
+  "name": "dating-app-kepco",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "한국전력공사 및 공공기관 매칭 시스템",
+  "homepage": "https://leejunsulove2-del.github.io/dating-app-kepco/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/leejunsulove2-del/dating-app-kepco.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",

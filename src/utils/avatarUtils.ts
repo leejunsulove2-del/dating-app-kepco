@@ -413,15 +413,75 @@ CAT_AVATARS.forEach((a) => {
   a.dataUri = svgToDataUri(a.svgContent);
 });
 
+// Import comprehensive 500+ Animal Avatar Library
+import rawAnimalAvatars from '../data/animalAvatars.json';
+
+export interface AnimalAvatarMeta {
+  id: string;
+  fileName: string;
+  url: string;
+  species: string;
+  koreanSpecies: string;
+  name: string;
+  bgTheme: string;
+  accessory: string;
+}
+
+export const ANIMAL_AVATARS: AnimalAvatarMeta[] = rawAnimalAvatars as AnimalAvatarMeta[];
+
+export const SPECIES_CATEGORIES = [
+  { id: 'all', name: '전체 (525종)', icon: '🐾' },
+  { id: 'fox', name: '여우', icon: '🦊' },
+  { id: 'bear', name: '곰', icon: '🐻' },
+  { id: 'wolf', name: '늑대', icon: '🐺' },
+  { id: 'giraffe', name: '기린', icon: '🦒' },
+  { id: 'rabbit', name: '토끼', icon: '🐰' },
+  { id: 'dog', name: '강아지', icon: '🐶' },
+  { id: 'cat', name: '고양이', icon: '🐱' },
+  { id: 'panda', name: '판다', icon: '🐼' },
+  { id: 'deer', name: '사슴', icon: '🦌' },
+  { id: 'squirrel', name: '다람쥐', icon: '🐿️' },
+  { id: 'hamster', name: '햄스터', icon: '🐹' },
+  { id: 'tiger', name: '호랑이', icon: '🐯' },
+  { id: 'penguin', name: '펭귄', icon: '🐧' },
+  { id: 'koala', name: '코알라', icon: '🐨' },
+  { id: 'otter', name: '수달', icon: '🦦' },
+];
+
 /**
- * Get guaranteed valid, ultra-lightweight avatar for user
- * Male -> Cute Dog (1 of 5)
- * Female -> Cute Cat (1 of 5)
+ * Filter animal avatars by species or search keyword
+ */
+export function filterAvatars(species = 'all', query = ''): AnimalAvatarMeta[] {
+  let list = ANIMAL_AVATARS;
+  if (species && species !== 'all') {
+    list = list.filter((a) => a.species === species);
+  }
+  if (query.trim()) {
+    const q = query.toLowerCase().trim();
+    list = list.filter(
+      (a) =>
+        a.name.toLowerCase().includes(q) ||
+        a.koreanSpecies.includes(q) ||
+        a.id.includes(q)
+    );
+  }
+  return list;
+}
+
+/**
+ * Get random animal avatar from library
+ */
+export function getRandomAnimalAvatar(species?: string): AnimalAvatarMeta {
+  const pool = species && species !== 'all' ? filterAvatars(species) : ANIMAL_AVATARS;
+  const idx = Math.floor(Math.random() * pool.length);
+  return pool[idx] || ANIMAL_AVATARS[0];
+}
+
+/**
+ * Get guaranteed valid, ultra-lightweight avatar for user from 500+ rich animal avatars
+ * Falls back consistently according to user seed.
  */
 export function getAvatarForUser(gender: 'male' | 'female' | string, seed: string | number = 0): string {
-  const isFemale = gender === 'female' || gender === 'woman';
-  const list = isFemale ? CAT_AVATARS : DOG_AVATARS;
-  
   let num = 0;
   if (typeof seed === 'number') {
     num = Math.abs(seed);
@@ -433,8 +493,17 @@ export function getAvatarForUser(gender: 'male' | 'female' | string, seed: strin
     num = Math.abs(num);
   }
 
-  const avatar = list[num % list.length];
-  return avatar ? avatar.dataUri : list[0].dataUri;
+  if (ANIMAL_AVATARS && ANIMAL_AVATARS.length > 0) {
+    const selected = ANIMAL_AVATARS[num % ANIMAL_AVATARS.length];
+    if (selected) {
+      return selected.url;
+    }
+  }
+
+  const isFemale = gender === 'female' || gender === 'woman';
+  const fallbackList = isFemale ? CAT_AVATARS : DOG_AVATARS;
+  const avatar = fallbackList[num % fallbackList.length];
+  return avatar ? avatar.dataUri : fallbackList[0].dataUri;
 }
 
 /**
@@ -451,3 +520,4 @@ export function handleAvatarError(
     target.src = safeUri;
   }
 }
+

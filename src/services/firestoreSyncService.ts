@@ -21,11 +21,25 @@ export class FirestoreSyncService {
   private static boardUnsubscribe: Unsubscribe | null = null;
   private static logsUnsubscribe: Unsubscribe | null = null;
   
-  // 📍 실시간 기기 간 위치 공유를 해제하기 위한 새로운 구독 관리 변수
+  // 📍 실시간 기기 간 위치 공유를 해제하기 위한 구독 관리 변수
   private static locationUnsubscribe: Unsubscribe | null = null;
 
+  // 🚀 Firebase 최적화 1: 사용자 목록 인메모리 TTL 캐시 (불필요한 getDocs 반복 호출 차단)
+  private static cachedUsers: UserProfile[] | null = null;
+  private static lastUsersFetchTimestamp = 0;
+  private static readonly USERS_CACHE_TTL_MS = 45000; // 45초 캐시 유지
+
+  // 🚀 Firebase 최적화 2: GPS 위치 업로드 Throttling & Minimum Movement Deadband
+  private static lastLocationUploadTimes = new Map<string, number>();
+  private static lastLocationCoords = new Map<string, { lat: number; lng: number }>();
+  private static readonly MIN_LOCATION_INTERVAL_MS = 30000; // 최소 30초 간격
+  private static readonly MIN_LOCATION_DELTA_DEG = 0.0003; // 약 30미터 이상 이동 시에만 쓰기
+
+  // 🚀 Firebase 최적화 3: 프로필 저장 스마트 Diff 비교 (중복 write 차단)
+  private static lastSavedUserFingerprints = new Map<string, string>();
+
   /**
-   * * Helper to obtain active Firestore instance
+   * Helper to obtain active Firestore instance
    */
   public static getDb() {
     const { db } = initFirebaseApp();
@@ -33,24 +47,44 @@ export class FirestoreSyncService {
   }
 
   // =========================================================================
-  // [기기 간 실시간 위치 공유 핵심 기능]
+  // [기기 간 실시간 위치 공유 최적화 기능]
   // =========================================================================
 
   /**
    * 내 기기의 GPS 위도/경도를 파이어베이스 서버의 'users' 컬렉션 내부 내 계정으로 보냅니다.
+   * [최적화]: 최소 30초 간격 및 30m 이상 의미 있는 위치 변화 시에만 Firestore 쓰기를 수행합니다.
    */
   public static async uploadMyLocation(userId: string, latitude: number, longitude: number): Promise<boolean> {
     const db = this.getDb();
     if (!db || !userId) return false;
 
+    const now = Date.now();
+    const lastTime = this.lastLocationUploadTimes.get(userId) || 0;
+    const lastCoord = this.lastLocationCoords.get(userId);
+
+    // 1) 30초 내 재호출 시 이전 위치와 거의 차이 없으면 Firestore 쓰기 스킵 (비용/부하 절감)
+    if (now - lastTime < this.MIN_LOCATION_INTERVAL_MS) {
+      if (lastCoord) {
+        const dLat = Math.abs(lastCoord.lat - latitude);
+        const dLng = Math.abs(lastCoord.lng - longitude);
+        if (dLat < this.MIN_LOCATION_DELTA_DEG && dLng < this.MIN_LOCATION_DELTA_DEG) {
+          // 변화 미미하므로 성공으로 간주하고 Firestore 전송 생략
+          return true;
+        }
+      }
+    }
+
     try {
       const userRef = doc(db, 'users', userId);
-      // 기존 다른 정보들은 유지한 채, 실시간 위치 정보 필드만 merge하여 업데이트
       await setDoc(userRef, {
         latitude,
         longitude,
-        updatedAt: Date.now()
+        updatedAt: now,
       }, { merge: true });
+
+      // 캐시 갱신
+      this.lastLocationUploadTimes.set(userId, now);
+      this.lastLocationCoords.set(userId, { lat: latitude, lng: longitude });
       return true;
     } catch (error) {
       console.warn(`[FirestoreSync] 내 위치 업로드 실패 (${userId}):`, error);
@@ -113,12 +147,32 @@ export class FirestoreSyncService {
     const db = this.getDb();
     if (!db || !user || !user.id) return false;
 
+    // Smart Diff Check: Skip duplicate writes if core user profile data hasn't changed
+    const fingerprint = JSON.stringify({
+      n: user.name,
+      s: user.approvalStatus,
+      p: user.photoUrl,
+      b: user.bio,
+      c: user.company,
+      g: user.gender,
+      i: user.interests,
+      bd: user.birthDate,
+      v: user.verifiedEmail,
+      t: user.isTestAccount,
+    });
+    if (this.lastSavedUserFingerprints.get(user.id) === fingerprint) {
+      return true; // Already up-to-date in Firestore
+    }
+
     try {
       const userRef = doc(db, 'users', user.id);
       // Clean undefined fields for Firestore
       const cleanData = JSON.parse(JSON.stringify(user));
       cleanData.updatedAt = Date.now();
       await setDoc(userRef, cleanData, { merge: true });
+
+      this.lastSavedUserFingerprints.set(user.id, fingerprint);
+      this.cachedUsers = null; // Invalidate cache on write
       return true;
     } catch (error) {
       console.warn(`[FirestoreSync] Failed to save user ${user.id}:`, error);
@@ -131,6 +185,8 @@ export class FirestoreSyncService {
     if (!db || !userId) return false;
     try {
       await deleteDoc(doc(db, 'users', userId));
+      this.cachedUsers = null; // Invalidate cache
+      this.lastSavedUserFingerprints.delete(userId);
       return true;
     } catch (error) {
       console.warn(`[FirestoreSync] Failed to delete user ${userId}:`, error);
@@ -152,6 +208,7 @@ export class FirestoreSyncService {
         }
       }
       await batch.commit();
+      this.cachedUsers = null; // Invalidate cache
       return true;
     } catch (error) {
       console.warn('[FirestoreSync] Failed to seed users to Firestore:', error);
@@ -162,6 +219,12 @@ export class FirestoreSyncService {
   public static async getUser(userId: string): Promise<UserProfile | null> {
     const db = this.getDb();
     if (!db || !userId) return null;
+
+    // Check memory cache first
+    if (this.cachedUsers) {
+      const found = this.cachedUsers.find((u) => u.id === userId);
+      if (found) return found;
+    }
 
     try {
       const userRef = doc(db, 'users', userId);
@@ -176,9 +239,17 @@ export class FirestoreSyncService {
     }
   }
 
-  public static async getAllUsers(): Promise<UserProfile[]> {
+  /**
+   * Get all users with TTL In-Memory Caching (45s) to heavily reduce Firestore reads
+   */
+  public static async getAllUsers(forceRefresh = false): Promise<UserProfile[]> {
     const db = this.getDb();
     if (!db) return [];
+
+    const now = Date.now();
+    if (!forceRefresh && this.cachedUsers && now - this.lastUsersFetchTimestamp < this.USERS_CACHE_TTL_MS) {
+      return this.cachedUsers;
+    }
 
     try {
       const usersRef = collection(db, 'users');
@@ -187,10 +258,12 @@ export class FirestoreSyncService {
       snapshot.forEach((doc) => {
         users.push({ ...doc.data(), id: doc.id } as UserProfile);
       });
+      this.cachedUsers = users;
+      this.lastUsersFetchTimestamp = now;
       return users;
     } catch (error) {
       console.warn('[FirestoreSync] Failed to get all users:', error);
-      return [];
+      return this.cachedUsers || [];
     }
   }
 
@@ -458,7 +531,8 @@ export class FirestoreSyncService {
     }
 
     const logsRef = collection(db, 'admin_logs');
-    this.logsUnsubscribe = onSnapshot(logsRef, (snapshot) => {
+    const q = query(logsRef, limit(60));
+    this.logsUnsubscribe = onSnapshot(q, (snapshot) => {
       const logs: AdminLogEntry[] = [];
       snapshot.forEach((doc) => {
         logs.push({ ...doc.data(), id: doc.id } as AdminLogEntry);
@@ -520,7 +594,8 @@ export class FirestoreSyncService {
     if (!db) return () => {};
 
     const boardRef = collection(db, 'board_posts');
-    return onSnapshot(boardRef, (snapshot) => {
+    const q = query(boardRef, limit(40));
+    return onSnapshot(q, (snapshot) => {
       const posts: AdminBoardPost[] = [];
       snapshot.forEach((d) => {
         posts.push({ ...d.data(), id: d.id } as AdminBoardPost);
@@ -541,7 +616,8 @@ export class FirestoreSyncService {
     }
 
     const boardRef = collection(db, 'board_posts');
-    this.boardUnsubscribe = onSnapshot(boardRef, (snapshot) => {
+    const q = query(boardRef, limit(40));
+    this.boardUnsubscribe = onSnapshot(q, (snapshot) => {
       const posts: AdminBoardPost[] = [];
       snapshot.forEach((doc) => {
         posts.push({ ...doc.data(), id: doc.id } as AdminBoardPost);
