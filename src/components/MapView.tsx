@@ -3,7 +3,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { UserProfile, UserLocation } from '../types';
 import { formatDistance, getUserActiveStatus } from '../utils/geo';
-import { getAvatarForUser } from '../utils/avatarUtils';
+import { getAvatarForUser, getInlineFallbackAvatar, resolveAssetUrl } from '../utils/avatarUtils';
 import { Compass, ZoomIn, ZoomOut, Navigation, LocateFixed, Clock, Radio } from 'lucide-react';
 
 // Defensive monkey-patch for Leaflet DomUtil, Map, GridLayer, Marker, PosAnimation, Popups, and Tooltips
@@ -621,7 +621,8 @@ export const MapView: React.FC<MapViewProps> = ({
       userLayer.addLayer(circle);
 
       // Profile photo fallback
-      const userPhoto = currentUser.photoUrl || getAvatarForUser(currentUser.gender, currentUser.id);
+      const userPhoto = resolveAssetUrl(currentUser.photoUrl) || getAvatarForUser(currentUser.gender, currentUser.id);
+      const fallbackPhoto = getInlineFallbackAvatar(currentUser.gender, currentUser.id);
       const isSelected = selectedUser?.id === currentUser.id;
 
       // "나" (Current User) Profile Pin with exact matching profile card shape and prominent "나" badge
@@ -634,7 +635,7 @@ export const MapView: React.FC<MapViewProps> = ({
           <div class="relative w-11 h-11 rounded-2xl border-2 ${
             isSelected ? 'border-rose-600 ring-4 ring-rose-300 shadow-2xl' : 'border-rose-500 ring-4 ring-rose-200/90 shadow-xl'
           } overflow-hidden bg-rose-50 flex items-center justify-center">
-            <img src="${userPhoto}" alt="나" class="w-full h-full object-cover" onerror="this.src='${getAvatarForUser(currentUser.gender, currentUser.id)}'" />
+            <img src="${userPhoto}" alt="나" class="w-full h-full object-cover" onerror="this.onerror=null; this.src='${fallbackPhoto}'" />
             
             <!-- Online status dot -->
             <span class="absolute top-0.5 right-0.5 w-2.5 h-2.5 bg-emerald-500 animate-pulse ring-1 ring-white border-2 border-white rounded-full"></span>
@@ -715,9 +716,9 @@ export const MapView: React.FC<MapViewProps> = ({
                 : 'border-white shadow-md opacity-95'
             } overflow-hidden bg-stone-100 flex items-center justify-center">
               <img 
-                src="${user.photoUrl || getAvatarForUser(user.gender, user.id)}" 
+                src="${resolveAssetUrl(user.photoUrl) || getAvatarForUser(user.gender, user.id)}" 
                 class="w-full h-full object-cover" 
-                onerror="this.src='${getAvatarForUser(user.gender, user.id)}'"
+                onerror="this.onerror=null; this.src='${getInlineFallbackAvatar(user.gender, user.id)}'"
               />
               
               <!-- Online status dot -->

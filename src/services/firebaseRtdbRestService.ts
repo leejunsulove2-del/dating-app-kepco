@@ -1,69 +1,9 @@
-/**
- * Firebase Realtime Database (RTDB) REST API Service
- * 
- * ============================================================================
- * [RTDB 무료 플랜(Spark Plan: 동시 연결 100개, 월 대역폭 10GB 제한) 최적화 아키텍처]
- * ============================================================================
- * 
- * 1. Firebase 모바일/웹 SDK(WebSocket 상시 연결 유지) 완전 배제
- *    - 웹소켓 상시 연결(Persistent Connection) 대신 순수 HTTP fetch REST API를 사용합니다.
- *    - 데이터를 송수신할 때만 일시적으로 HTTP 통신을 맺고 즉시 연결을 해제하므로,
- *      '동시 연결 수 100개 제한'을 0개(무제한 분산) 수준으로 완벽하게 우회합니다.
- * 
- * 2. 60초(1분) 주기 통신
- *    - 60초 타이머 주기에 맞춰 위치 전송 및 주변 사용자 동기화가 동작합니다.
- * 
- * 3. [업로드 최적화]: 50m 이내 미세 이동 시 HTTP 요청 완전 차단 (Pass/Skip)
- *    - 이전 전송 좌표와 현재 GPS 좌표의 Haversine 거리를 계산하여,
- *      50m (0.05km) 이내의 변화일 경우 파이어베이스에 어떠한 HTTP 요청도 전송하지 않습니다.
- * 
- * 4. [반경 30km 다운로드 최적화]: Geohash 및 위경도(orderBy="lat"&startAt&endAt) 기반 쿼리
- *    - 전체 사용자 목록을 무차별 다운로드하지 않고, 내 위치 기준 반경 30km (위도 약 ±0.2703°)
- *      영역만 파이어베이스 RTDB REST 쿼리로 1차 슬라이싱하여 다운로드합니다.
- *    - 다운로드된 데이터 중 Haversine 계산으로 정확히 30km 이내만 정밀 필터링합니다.
- * 
- * ============================================================================
- * [파이어베이스 RTDB에 저장되는 데이터 JSON 구조 예시]
- * ============================================================================
- * 
- * {
- *   "locations": {
- *     "user_kepco_01": {
- *       "userId": "user_kepco_01",
- *       "name": "김전력",
- *       "gender": "male",
- *       "company": "한국전력공사",
- *       "age": 29,
- *       "photoUrl": "/assets/profiles/man_1.svg",
- *       "bio": "빛가람 혁신도시에서 근무 중입니다.",
- *       "interests": ["러닝", "커피"],
- *       "lat": 37.4979,
- *       "lng": 127.0276,
- *       "geohash": "wydm9q",
- *       "geohash4": "wydm",
- *       "lastUpdated": 1700000000000
- *     }
- *   },
- *   "system_settings": {
- *     "autoApprove60s": {
- *       "enabled": true,
- *       "updatedAt": 1700000000000,
- *       "updatedBy": "admin@kepco.co.kr"
- *     }
- *   }
- * }
- * 
- * [RTDB 추천 인덱스 규칙 (database.rules.json)]:
- * {
- *   "rules": {
- *     ".read": true,
- *     ".write": true,
- *     "locations": {
- *       ".indexOn": ["lat", "geohash4", "userId"]
- *     }
- *   }
- * }
- */
+// [FILE LOCATION]: src/services/firebaseRtdbRestService.ts
+// [ROLE]: 싱가포르(asia-southeast1) Firebase Realtime Database(RTDB) 순수 REST API 통신 엔진
+// [FEATURE]: 
+//   1. WebSocket 상시 연결 완전 배제 (단기 HTTP fetch 사용으로 동시 접속 100개 제한 영향 0)
+//   2. 60초 주기 위치 전송 및 50m 이내 미세 이동 시 업로드 패스 (Pass)
+//   3. 반경 30km 위도 슬라이싱 REST 쿼리 및 Haversine 30km 정밀 필터링
 
 import { UserProfile } from '../types';
 import { calculateDistanceKm } from '../utils/geo';
@@ -90,7 +30,7 @@ export function encodeGeohash(lat: number, lng: number, precision = 6): string {
     if (isEven) {
       const mid = (lngMin + lngMax) / 2;
       if (lng > mid) {
-        ch |= (1 << (4 - bit));
+        ch |= 1 << (4 - bit);
         lngMin = mid;
       } else {
         lngMax = mid;
@@ -98,7 +38,7 @@ export function encodeGeohash(lat: number, lng: number, precision = 6): string {
     } else {
       const mid = (latMin + latMax) / 2;
       if (lat > mid) {
-        ch |= (1 << (4 - bit));
+        ch |= 1 << (4 - bit);
         latMin = mid;
       } else {
         latMax = mid;
@@ -148,26 +88,34 @@ export class FirebaseRtdbRestService {
   private static lastFetchCenter: { lat: number; lng: number } | null = null;
 
   /**
-   * Firebase RTDB Base URL 반환
+   * 싱가포르(asia-southeast1) 또는 설정된 Firebase RTDB Base URL 반환
    */
   public static getDatabaseUrl(): string {
     const config = getStoredFirebaseConfig();
-    if (config?.databaseURL) {
-      return config.databaseURL.replace(/\/$/, '');
+    let url = config?.databaseURL || '';
+    if (!url) {
+      const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
+      url = env.VITE_FIREBASE_DATABASE_URL || '';
     }
-    const env = (import.meta as unknown as { env?: Record<string, string> }).env || {};
-    if (env.VITE_FIREBASE_DATABASE_URL) {
-      return env.VITE_FIREBASE_DATABASE_URL.replace(/\/$/, '');
+
+    url = url.trim().replace(/\/$/, '');
+
+    // 사용자 입력이 불완전하거나 결손되었을 경우 싱가포르 기본 엔드포인트 자동 조립
+    if (
+      !url ||
+      url === 'https://firebasedatabase.app' ||
+      url === 'http://firebasedatabase.app' ||
+      url === '://firebasedatabase.app'
+    ) {
+      const projectId = config?.projectId || 'dating-app-kepco';
+      url = `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
     }
-    const projectId = config?.projectId || env.VITE_FIREBASE_PROJECT_ID;
-    if (projectId) {
-      return `https://${projectId}-default-rtdb.firebaseio.com`;
-    }
-    return '';
+
+    return url;
   }
 
   // =========================================================================
-  // 1. [업로드 최적화 함수] 50m 이내 미세 이동 시 REST 요청 Pass / 50m 초과 시만 HTTP PUT
+  // 1. [업로드 최적화] 50m 이내 미세 이동 시 HTTP 요청 Pass / 50m 초과 시만 HTTP PUT
   // =========================================================================
   public static async uploadMyLocation(
     user: UserProfile,
@@ -181,12 +129,12 @@ export class FirebaseRtdbRestService {
 
     const prev = this.lastUploadedCoords.get(user.id);
 
-    // 📍 [최적화 규칙 3]: 사용자의 현재 GPS 좌표가 이전 좌표와 비교해 50m(0.05km) 이내이면 패스
+    // 📍 [최적화 규칙 1]: 사용자의 현재 GPS 좌표가 이전 좌표와 비교해 50m(0.05km) 이내이면 패스
     if (!force && prev) {
       const movedDistanceKm = calculateDistanceKm(prev.lat, prev.lng, latitude, longitude);
       if (movedDistanceKm <= 0.05) {
         const movedMeters = Math.round(movedDistanceKm * 1000);
-        console.log(`[RTDB REST 업로드 최적화] 위치 변화 미미 (${movedMeters}m <= 50m). HTTP 요청 생략 (Spark 플랜 쿼터 절약)`);
+        console.log(`[RTDB REST] 위치 변화 미미 (${movedMeters}m <= 50m). HTTP 요청 생략 (Spark 플랜 쿼터 절약)`);
         return { uploaded: false, reason: `movement_under_50m (${movedMeters}m)` };
       }
     }
@@ -232,11 +180,13 @@ export class FirebaseRtdbRestService {
 
         if (res.ok) {
           this.lastUploadedCoords.set(user.id, { lat: latitude, lng: longitude, time: now });
-          console.log(`[RTDB REST] 사용자 ${user.name} 위치 업로드 성공 (Geohash: ${geohash})`);
+          console.log(`[RTDB REST] 싱가포르 RTDB 위치 업로드 완료 (${user.name}: lat=${latitude.toFixed(4)}, lng=${longitude.toFixed(4)})`);
           return { uploaded: true, reason: 'rtdb_put_success' };
+        } else {
+          console.warn(`[RTDB REST] RTDB HTTP 상태코드: ${res.status} ${res.statusText}`);
         }
       } catch (err) {
-        console.warn('[RTDB REST] RTDB 위치 전송 오류 (서버 동기화로 백업):', err);
+        console.warn('[RTDB REST] 싱가포르 RTDB 위치 전송 오류 (백엔드 로컬 DB로 백업):', err);
       }
     }
 
@@ -253,11 +203,11 @@ export class FirebaseRtdbRestService {
     } catch {}
 
     this.lastUploadedCoords.set(user.id, { lat: latitude, lng: longitude, time: now });
-    return { uploaded: true, reason: 'synced' };
+    return { uploaded: true, reason: 'synced_local_db' };
   }
 
   // =========================================================================
-  // 2. [반경 30km 다운로드 최적화 함수] 위도 범위 쿼리(orderBy="lat"&startAt&endAt)
+  // 2. [반경 30km 다운로드 최적화] 위도 범위 쿼리(orderBy="lat") 및 Haversine 30km 필터
   // =========================================================================
   public static async fetchNearbyUsersWithin30Km(
     currentLat: number,
@@ -286,10 +236,9 @@ export class FirebaseRtdbRestService {
     const dbUrl = this.getDatabaseUrl();
     let records: RTDBUserLocationRecord[] = [];
 
-    // 📍 [최적화 규칙 4]: 전체 다운로드가 아닌 내 위치 기준 '반경 30km' 위도 구간만 REST 쿼리
+    // 📍 [최적화 규칙 2]: 전체 다운로드가 아닌 내 위치 기준 '반경 30km' 위도 구간만 REST 쿼리
     if (dbUrl) {
       try {
-        // Firebase RTDB REST API 쿼리 파라미터는 JSON 인코딩 필요
         const queryUrl = `${dbUrl}/locations.json?orderBy="lat"&startAt=${minLat}&endAt=${maxLat}`;
         const res = await fetch(queryUrl, {
           method: 'GET',
@@ -300,11 +249,22 @@ export class FirebaseRtdbRestService {
           const data = await res.json();
           if (data && typeof data === 'object') {
             records = Object.values(data);
-            console.log(`[RTDB REST 30km 다운로드 최적화] 위도 구간 (${minLat}~${maxLat}) 내 ${records.length}명 수신`);
+            console.log(`[RTDB REST 30km 최적화] 위도 구간 (${minLat}~${maxLat}) 내 ${records.length}명 수신`);
+          }
+        } else if (res.status === 400) {
+          // 인덱스(.indexOn)가 아직 미등록된 경우 전체 목록으로 안전 폴백 후 클라이언트 거리 계산
+          const fallbackRes = await fetch(`${dbUrl}/locations.json`, {
+            headers: { 'Connection': 'close' },
+          });
+          if (fallbackRes.ok) {
+            const fbData = await fallbackRes.json();
+            if (fbData && typeof fbData === 'object') {
+              records = Object.values(fbData);
+            }
           }
         }
       } catch (err) {
-        console.warn('[RTDB REST] RTDB 30km 쿼리 실패, 백엔드/로컬 폴백 사용:', err);
+        console.warn('[RTDB REST] 싱가포르 RTDB 30km 쿼리 실패, 백엔드 폴백 사용:', err);
       }
     }
 
@@ -365,7 +325,7 @@ export class FirebaseRtdbRestService {
           approvalStatus: 'approved',
           verifiedEmail: true,
           isOnline: true,
-          createdAt: r.createdAt || (now - 86400000),
+          createdAt: r.createdAt || now - 86400000,
           lastActive: r.lastActive || now,
           popularity: 120,
         });
@@ -380,7 +340,7 @@ export class FirebaseRtdbRestService {
   }
 
   // =========================================================================
-  // 3. [기관담당자 60초 자동심사 설정 DB 영구 기록]
+  // 3. [기관담당자 60초 자동심사 설정 RTDB REST 영구 기록]
   // =========================================================================
   public static async saveAutoApprove60sSetting(
     enabled: boolean,
@@ -405,7 +365,7 @@ export class FirebaseRtdbRestService {
           },
           body: JSON.stringify(payload),
         });
-        console.log(`[RTDB REST] 60초 자동승인 설정 (${enabled ? 'ON' : 'OFF'}) RTDB 저장 완료`);
+        console.log(`[RTDB REST] 60초 자동승인 설정 (${enabled ? 'ON' : 'OFF'}) 싱가포르 RTDB 기록 완료`);
       } catch (err) {
         console.warn('[RTDB REST] 60초 자동승인 RTDB 저장 실패:', err);
       }
@@ -443,7 +403,9 @@ export class FirebaseRtdbRestService {
     const dbUrl = this.getDatabaseUrl();
     if (dbUrl) {
       try {
-        const res = await fetch(`${dbUrl}/system_settings/autoApprove60s.json`);
+        const res = await fetch(`${dbUrl}/system_settings/autoApprove60s.json`, {
+          headers: { 'Connection': 'close' },
+        });
         if (res.ok) {
           const data = await res.json();
           if (data && typeof data.enabled === 'boolean') {

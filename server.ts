@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
@@ -25,8 +26,9 @@ interface ServerDatabase {
 
 const DB_FILE_PATH = path.join(process.cwd(), 'server_database.json');
 
-// Master admin password securely provided via environment variable (GitHub repository secrets)
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+// Master admin password securely provided via environment variable (GitHub repository secrets) or legacy master password
+const DEFAULT_LEGACY_ADMIN_PASSWORD = '12101074';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || DEFAULT_LEGACY_ADMIN_PASSWORD;
 
 const DEFAULT_SERVER_ADMINS = [
   {
@@ -444,12 +446,19 @@ async function startServer() {
     const cleanEmail = String(email).toLowerCase().trim();
 
     // 1. Check Master Admin
-    if (cleanEmail === 'admin@kepco.co.kr' && passwordPlain === ADMIN_PASSWORD) {
-      const master = db.adminAccounts.find((a) => a.email?.toLowerCase() === 'admin@kepco.co.kr') || DEFAULT_SERVER_ADMINS[0];
+    const isMasterEmail = cleanEmail === 'admin@kepco.co.kr';
+    const masterAccount = db.adminAccounts.find((a) => a.email?.toLowerCase() === 'admin@kepco.co.kr') || DEFAULT_SERVER_ADMINS[0];
+    const isMasterPasswordMatch =
+      passwordPlain === ADMIN_PASSWORD ||
+      passwordPlain === DEFAULT_LEGACY_ADMIN_PASSWORD ||
+      (masterAccount?.passwordPlain && passwordPlain === masterAccount.passwordPlain) ||
+      (process.env.ADMIN_PASSWORD && passwordPlain === process.env.ADMIN_PASSWORD);
+
+    if (isMasterEmail && isMasterPasswordMatch) {
       return res.json({
         success: true,
         isAdmin: true,
-        adminAccount: { ...master, passwordPlain: ADMIN_PASSWORD },
+        adminAccount: { ...masterAccount, passwordPlain },
       });
     }
 

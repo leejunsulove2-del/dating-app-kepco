@@ -7,7 +7,7 @@ import { DatingService } from '../services/datingService';
 import { ItemService } from '../services/itemService';
 import { AVAILABLE_STICKERS } from '../services/mockProfiles';
 import { ReportModal } from './ReportModal';
-import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
+import { handleAvatarError, getAvatarForUser, resolveAssetUrl } from '../utils/avatarUtils';
 
 interface ProfileDetailModalProps {
   user: UserProfile | null;
@@ -206,7 +206,7 @@ export const ProfileDetailModal: React.FC<ProfileDetailModalProps> = ({
         {/* Profile Image & Top Actions */}
         <div className="relative h-56 sm:h-64 w-full bg-stone-900 shrink-0">
           <img
-            src={user.photoUrl || getAvatarForUser(user.gender, user.id)}
+            src={resolveAssetUrl(user.photoUrl) || getAvatarForUser(user.gender, user.id)}
             alt={user.name}
             onError={(e) => handleAvatarError(e, user.gender, user.id)}
             className="w-full h-full object-cover"

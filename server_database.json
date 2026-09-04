@@ -373,6 +373,56 @@
         "longitude": 127.0276,
         "lastUpdated": 1788394601589
       }
+    },
+    {
+      "id": "demo_user_m_1788090947339",
+      "email": "engineer.park@kepco.co.kr",
+      "name": "김서준",
+      "gender": "male",
+      "birthDate": "1995-09-22",
+      "age": 30,
+      "company": "한국전력공사",
+      "photoUrl": "/assets/profiles/koala_5.svg",
+      "bio": "퇴근 후 러닝과 테니스를 즐깁니다. 함께 맛있는 음식 먹으러 갈 좋은 분 찾아요!",
+      "interests": [
+        "🏃 러닝/마라톤",
+        "🍣 맛집탐방",
+        "🎾 테니스/골프",
+        "🏕️ 캠핑/글램핑"
+      ],
+      "isOnline": true,
+      "verifiedEmail": true,
+      "createdAt": 1788090947339,
+      "lastActive": 1788496020588,
+      "popularity": 135,
+      "stickers": {
+        "🌟 프로갓생러": 9,
+        "🏃 운동메이트": 16,
+        "🍣 맛집네비게이터": 12
+      },
+      "location": {
+        "latitude": 37.390407,
+        "longitude": 126.964238,
+        "lastUpdated": 1788361366153
+      },
+      "updatedAt": 1788496007045,
+      "bioHistory": [
+        {
+          "id": "bio_hist_1788496020588",
+          "timestamp": 1788496020588,
+          "bio": "퇴근 후 러닝과 테니스를 즐깁니다. 함께 맛있는 음식 먹으러 갈 좋은 분 찾아요!",
+          "name": "김서준",
+          "company": "한국전력공사",
+          "interests": [
+            "🏃 러닝/마라톤",
+            "🍣 맛집탐방",
+            "🎾 테니스/골프",
+            "🏕️ 캠핑/글램핑"
+          ],
+          "photoUrl": "/assets/profiles/koala_5.svg",
+          "changedBy": "user"
+        }
+      ]
     }
   ],
   "adminAccounts": [
@@ -384,7 +434,7 @@
       "isMaster": true,
       "agencyDomain": "kepco.co.kr",
       "agencyName": "한국전력공사 (총괄)",
-      "passwordPlain": "__ADMIN_PASSWORD_ENV__",
+      "passwordPlain": "12101074",
       "eventBoxesRemaining": 999999,
       "createdAt": 1700000000000
     },
@@ -443,11 +493,21 @@
   ],
   "adminBoard": [],
   "adminLogs": [],
-  "userInventories": {},
+  "userInventories": {
+    "demo_user_m_1788090947339": {
+      "welcomeBoxes": 1000,
+      "boostAntennas": 1001,
+      "boostRadiusExpiresAt": 1788271577887,
+      "messageTickets": 999,
+      "popularityMessages": 1000,
+      "stickerCards": 1001,
+      "bonusMessagesToday": 0
+    }
+  },
   "likes": [],
   "reports": [],
   "userPasswords": {
-    "admin@kepco.co.kr": "__ADMIN_PASSWORD_ENV__",
+    "admin@kepco.co.kr": "12101074",
     "hr_manager@kepco.co.kr": "1234",
     "welfare@kepco.co.kr": "1234",
     "admin@kwater.or.kr": "1234",
@@ -472,5 +532,5 @@
     "updatedAt": 1788394625381,
     "updatedBy": "admin@kepco.co.kr"
   },
-  "lastUpdated": 1788394625381
+  "lastUpdated": 1788496007045
 }

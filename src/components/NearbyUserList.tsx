@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Building2, MapPin, ChevronUp, ChevronDown, Flame, Tag } from 'lucide-react';
 import { UserProfile } from '../types';
 import { formatDistance, getUserActiveStatus } from '../utils/geo';
-import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
+import { handleAvatarError, getAvatarForUser, resolveAssetUrl } from '../utils/avatarUtils';
 
 interface NearbyUserListProps {
   nearbyUsers: UserProfile[];
@@ -147,7 +147,7 @@ export const NearbyUserList: React.FC<NearbyUserListProps> = ({
                   {/* Avatar */}
                   <div className="relative w-16 h-16 rounded-xl overflow-hidden shrink-0 bg-stone-100 border border-stone-200/60">
                     <img 
-                      src={user.photoUrl || getAvatarForUser(user.gender, user.id)} 
+                      src={resolveAssetUrl(user.photoUrl) || getAvatarForUser(user.gender, user.id)} 
                       alt={user.name} 
                       onError={(e) => handleAvatarError(e, user.gender, user.id)}
                       className="w-full h-full object-cover" 

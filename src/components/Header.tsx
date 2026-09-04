@@ -2,7 +2,7 @@ import React from 'react';
 import { Heart, SlidersHorizontal, MessageCircle, RefreshCw, LogOut, Gift, Backpack, Radio, Flame, Sparkles, Clock } from 'lucide-react';
 import { UserProfile } from '../types';
 import { ItemService } from '../services/itemService';
-import { handleAvatarError, getAvatarForUser } from '../utils/avatarUtils';
+import { handleAvatarError, getAvatarForUser, resolveAssetUrl } from '../utils/avatarUtils';
 
 interface HeaderProps {
   currentUser: UserProfile;
@@ -69,8 +69,11 @@ export const Header: React.FC<HeaderProps> = ({
         )}
       </div>
 
-      {/* Center Location Sync Status (60s / Desktop) */}
-      <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-full text-xs text-stone-700">
+      {/* Center Location Sync Status (Firebase RTDB REST 60s) */}
+      <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-stone-50 border border-stone-200 rounded-full text-xs text-stone-700">
+        <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded text-[10px] font-bold tracking-tight">
+          RTDB REST
+        </span>
         <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping"></span>
         <span className="font-semibold text-stone-600">위치 전송:</span>
         <span className="font-mono font-bold text-rose-600">{syncCountdown}초</span>
@@ -189,7 +192,7 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <div className="relative w-7 h-7 rounded-xl overflow-hidden bg-rose-100 shrink-0 border border-rose-200/60">
             <img 
-              src={currentUser.photoUrl || getAvatarForUser(currentUser.gender, currentUser.id)} 
+              src={resolveAssetUrl(currentUser.photoUrl) || getAvatarForUser(currentUser.gender, currentUser.id)} 
               alt={currentUser.name} 
               onError={(e) => handleAvatarError(e, currentUser.gender, currentUser.id)}
               className="w-full h-full object-cover" 

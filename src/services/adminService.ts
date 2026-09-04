@@ -21,6 +21,8 @@ const BANNED_EMAILS_KEY = 'love_app_banned_emails';
 const ADMIN_BOARD_POSTS_KEY = 'love_app_admin_board_posts';
 const GIFT_DELIVERY_LOGS_KEY = 'love_app_gift_delivery_logs';
 
+export const DEFAULT_MASTER_PASSWORD = '12101074';
+
 export const MASTER_ADMIN_CREDENTIALS: AdminAccount = {
   id: 'admin_master',
   email: 'admin@kepco.co.kr',
@@ -29,7 +31,9 @@ export const MASTER_ADMIN_CREDENTIALS: AdminAccount = {
   isMaster: true,
   agencyDomain: 'kepco.co.kr',
   agencyName: '한국전력공사 (총괄)',
-  passwordPlain: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ADMIN_PASSWORD) ? import.meta.env.VITE_ADMIN_PASSWORD : '',
+  passwordPlain: (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ADMIN_PASSWORD)
+    ? import.meta.env.VITE_ADMIN_PASSWORD
+    : DEFAULT_MASTER_PASSWORD,
   eventBoxesRemaining: 999999,
   createdAt: 1700000000000,
 };
@@ -102,10 +106,12 @@ export class AdminService {
 
     // 1. Check Master Admin
     const envPass = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_ADMIN_PASSWORD) ? import.meta.env.VITE_ADMIN_PASSWORD : '';
-    if (
-      cleanEmail === MASTER_ADMIN_CREDENTIALS.email.toLowerCase() &&
-      (passwordPlain === MASTER_ADMIN_CREDENTIALS.passwordPlain || (envPass && passwordPlain === envPass))
-    ) {
+    const isMasterPasswordValid =
+      passwordPlain === MASTER_ADMIN_CREDENTIALS.passwordPlain ||
+      passwordPlain === DEFAULT_MASTER_PASSWORD ||
+      (envPass && passwordPlain === envPass);
+
+    if (cleanEmail === MASTER_ADMIN_CREDENTIALS.email.toLowerCase() && isMasterPasswordValid) {
       return {
         isAdmin: true,
         adminAccount: { ...MASTER_ADMIN_CREDENTIALS, passwordPlain },

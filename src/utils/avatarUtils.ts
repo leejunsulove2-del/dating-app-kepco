@@ -449,6 +449,49 @@ export const SPECIES_CATEGORIES = [
 ];
 
 /**
+ * Resolve asset URL safely across environments (Root domain, Cloud Run, GitHub Pages subdirectory)
+ */
+export function resolveAssetUrl(url?: string | null): string {
+  if (!url) return '';
+  if (url.startsWith('data:') || url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  const base = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL)
+    ? import.meta.env.BASE_URL
+    : '/';
+  const cleanBase = base.endsWith('/') ? base : `${base}/`;
+  const cleanUrl = url.startsWith('/') ? url.slice(1) : url;
+
+  // Avoid duplicate basePath
+  if (cleanBase !== '/' && cleanUrl.startsWith(cleanBase.replace(/^\/|\/$/g, ''))) {
+    return `/${cleanUrl}`;
+  }
+
+  return `${cleanBase}${cleanUrl}`;
+}
+
+/**
+ * Guaranteed 100% offline pure inline SVG Data-URI fallback that NEVER fails over network
+ */
+export function getInlineFallbackAvatar(gender: 'male' | 'female' | string = 'male', seed: string | number = 0): string {
+  let num = 0;
+  if (typeof seed === 'number') {
+    num = Math.abs(seed);
+  } else if (typeof seed === 'string') {
+    for (let i = 0; i < seed.length; i++) {
+      num = (num << 5) - num + seed.charCodeAt(i);
+      num |= 0;
+    }
+    num = Math.abs(num);
+  }
+
+  const isFemale = gender === 'female' || gender === 'woman';
+  const fallbackList = isFemale ? CAT_AVATARS : DOG_AVATARS;
+  const avatar = fallbackList[num % fallbackList.length];
+  return avatar ? avatar.dataUri : fallbackList[0].dataUri;
+}
+
+/**
  * Filter animal avatars by species or search keyword
  */
 export function filterAvatars(species = 'all', query = ''): AnimalAvatarMeta[] {
@@ -495,19 +538,17 @@ export function getAvatarForUser(gender: 'male' | 'female' | string, seed: strin
 
   if (ANIMAL_AVATARS && ANIMAL_AVATARS.length > 0) {
     const selected = ANIMAL_AVATARS[num % ANIMAL_AVATARS.length];
-    if (selected) {
-      return selected.url;
+    if (selected && selected.url) {
+      return resolveAssetUrl(selected.url);
     }
   }
 
-  const isFemale = gender === 'female' || gender === 'woman';
-  const fallbackList = isFemale ? CAT_AVATARS : DOG_AVATARS;
-  const avatar = fallbackList[num % fallbackList.length];
-  return avatar ? avatar.dataUri : fallbackList[0].dataUri;
+  return getInlineFallbackAvatar(gender, seed);
 }
 
 /**
  * Safe image fallback resolver on <img> onError
+ * CRITICAL: Immediately detaches onError to prevent infinite blinking loop on mobile networks
  */
 export function handleAvatarError(
   e: React.SyntheticEvent<HTMLImageElement, Event>,
@@ -515,9 +556,9 @@ export function handleAvatarError(
   seed: string | number = 0
 ): void {
   const target = e.currentTarget;
-  const safeUri = getAvatarForUser(gender, seed);
-  if (target.src !== safeUri) {
-    target.src = safeUri;
-  }
+  // 1. Immediately disconnect onError to completely stop recursive re-triggering & blinking
+  target.onerror = null;
+  // 2. Assign bulletproof inline SVG data-uri (zero network overhead, instant rendering)
+  target.src = getInlineFallbackAvatar(gender, seed);
 }
 
